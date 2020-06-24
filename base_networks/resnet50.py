@@ -71,7 +71,7 @@ def preprocess_inputs(image):
     return image
 
 
-def get_model(res, pooling=None):
+def get_model(res, classes):
     model_name = 'resnet50'
     data_format = 'channels_first'
     bn_axis = 1
@@ -90,10 +90,8 @@ def get_model(res, pooling=None):
 
     x = stack_fn(x)
 
-    if pooling == 'avg':
-        x = layers.GlobalAveragePooling2D(name='avg_pool', data_format=data_format)(x)
-    elif pooling == 'max':
-        x = layers.GlobalMaxPooling2D(name='max_pool', data_format=data_format)(x)
+    x = layers.GlobalAveragePooling2D(name='avg_pool', data_format=data_format)(x)
+    x = layers.Dense(classes, activation='softmax', name='probs')(x)
 
     inputs = img_input
 
@@ -105,10 +103,19 @@ def get_model(res, pooling=None):
 def main():
     from tensorflow.keras.applications.resnet50 import ResNet50
 
-    official = ResNet50(include_top=False, weights=None, input_shape=(224, 224, 3), pooling=None)
+    res = 224
+    classes = 1000
+
+    # Total params: 25,636,712
+    # Trainable params: 25,583,592
+    # Non-trainable params: 53,120
+    official = ResNet50(include_top=True, weights=None, input_shape=(res, res, 3), pooling=None, classes=classes)
     official.summary()
 
-    resnet50 = get_model(res=224)
+    # Total params: 25,636,712
+    # Trainable params: 25,583,592
+    # Non-trainable params: 53,120
+    resnet50 = get_model(res=res, classes=classes)
     resnet50.summary()
     return
 
