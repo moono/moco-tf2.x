@@ -21,7 +21,7 @@ class MoCoTrainer(object):
     def train(self, dist_dataset, strategy):
 
         for d in dist_dataset:
-            tf.print(d)
+            tf.print(strategy.experimental_local_results(d))
             all_idx = tf.range(self.global_batch_size)
             shuffle_idx = tf.random.shuffle(all_idx)
 
