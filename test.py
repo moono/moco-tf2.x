@@ -92,6 +92,9 @@ class MoCoTrainer(object):
             all_shuffled_idx = strategy.experimental_local_results(dist_batch_shuffle())
             all_shuffled_idx = tf.concat(all_shuffled_idx, axis=0)
             tf.print(all_shuffled_idx)
+
+            shuffled_data = tf.gather(d, indices=all_shuffled_idx)
+            tf.print(strategy.experimental_local_results(shuffled_data))
         return
 
 
