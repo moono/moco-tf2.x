@@ -48,6 +48,7 @@ class MoCoTrainer(object):
 
     def forward_encoder_q(self, im_q):
         # compute query features
+        im_q = tf.expand_dims(im_q, axis=1)
         q = self.encoder_q(im_q)    # queries: NxC
         q = tf.math.l2_normalize(q, axis=1)
         return q
@@ -65,6 +66,7 @@ class MoCoTrainer(object):
         im_k = tf.gather(all_images, indices=this_idx)
 
         # run encoder_k
+        im_k = tf.expand_dims(im_k, axis=1)
         k = self.encoder_k(im_k)  # keys: NxC
         k = tf.math.l2_normalize(k, axis=1)
 
