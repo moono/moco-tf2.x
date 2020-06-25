@@ -66,8 +66,8 @@ class MoCoTrainer(object):
             # compute query features
             q = self.forward_encoder_q(im_q)  # queries: NxC
 
-            # should momentum update here?
-            self._momentum_update_key_encoder()
+            # # should momentum update here?
+            # self._momentum_update_key_encoder()
 
             # compute key features with shuffled data
             k = self.forward_encoder_k(shuffled_data)
