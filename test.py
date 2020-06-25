@@ -21,7 +21,7 @@ class MoCoTrainer(object):
         return
 
     def train(self, strategy):
-        strategy.experimental_run_v2(self._batch_shuffle())
+        strategy.experimental_run_v2(self._batch_shuffle)
         return
 
 
