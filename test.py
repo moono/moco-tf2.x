@@ -91,15 +91,14 @@ class MoCoTrainer(object):
         return shuffled_data, shuffled_idx
 
     def per_replica_run_test(self, d):
+        replica_id = tf.distribute.get_replica_context().replica_id_in_sync_group
+        tf.print(f'Run {replica_id}: {d}')
         return
 
     def train(self, dist_dataset, strategy):
-        # def dist_batch_shuffle():
-        #     all_idx = tf.range(self.global_batch_size)
-        #     shuffle_idx = tf.random.shuffle(all_idx)
-        #
-        #     per_replica_idx = strategy.experimental_run_v2(fn=self._batch_shuffle, args=(shuffle_idx,))
-        #     return per_replica_idx
+        def dist_run_shuffled_data(data):
+            per_replica_result = strategy.experimental_run_v2(fn=self.per_replica_run_test, args=(data,))
+            return per_replica_result
 
         for d in dist_dataset:
             # tf.print(strategy.experimental_local_results(d))
@@ -107,6 +106,9 @@ class MoCoTrainer(object):
 
             tf.print(shuffled_data)
             tf.print(shuffled_idx)
+
+            result = dist_run_shuffled_data(shuffled_data)
+            tf.print(strategy.experimental_local_results(result))
 
             # all_shuffled_idx = strategy.experimental_local_results(dist_batch_shuffle())
             # all_shuffled_idx = tf.concat(all_shuffled_idx, axis=0)
