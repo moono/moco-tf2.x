@@ -16,6 +16,7 @@ class Linear(tf.keras.models.Model):
 
 class MoCoTrainer(object):
     def __init__(self, batch_size, global_batch_size):
+        self.use_tf_function = True
         self.batch_size = batch_size
         self.global_batch_size = global_batch_size
 
@@ -81,6 +82,10 @@ class MoCoTrainer(object):
         def dist_run_key_encoder(data):
             per_replica_result = strategy.experimental_run_v2(fn=self.forward_encoder_k, args=(data, ))
             return per_replica_result
+
+        if self.use_tf_function:
+            dist_run_query_encoder = tf.function(dist_run_query_encoder)
+            dist_run_key_encoder = tf.function(dist_run_key_encoder)
 
         for d in dist_dataset:
             qs = dist_run_query_encoder(d)
