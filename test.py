@@ -15,13 +15,13 @@ class MoCoTrainer(object):
         this_idx = shuffle_idx[this_start:this_end]
 
         tf.print(f'Replica {replica_id}: {this_idx}')
-        tf.print(d)
+        tf.print(f'Replica {replica_id}: {d}')
         return
 
     def train(self, dist_dataset, strategy):
 
         for d in dist_dataset:
-
+            tf.print(d)
             all_idx = tf.range(self.global_batch_size)
             shuffle_idx = tf.random.shuffle(all_idx)
 
