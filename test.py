@@ -24,7 +24,7 @@ class Linear(tf.keras.models.Model):
 class MoCoTrainer(object):
     def __init__(self, batch_size, global_batch_size, dim):
         self.use_tf_function = False
-        self.K = 1024
+        self.K = 16
         self.m = 0.999
         self.dim = dim
         self.batch_size = batch_size
@@ -149,11 +149,13 @@ class MoCoTrainer(object):
         tf.print(f'keys: {keys}')
         tf.print(f'indices: {indices}')
 
-        # queue_update = tf.scatter_update(queue, inds, item)
         updated_queue = tf.scatter_nd(indices=indices, updates=keys, shape=self.queue_shape)
+        updated_queue_ptr = end_queue_ptr % self.K
 
         tf.print(f'updated_queue: {updated_queue}')
+        tf.print(f'updated_queue_ptr: {updated_queue_ptr}')
         self.queue.assign(updated_queue)
+        self.queue_ptr.assign(updated_queue_ptr)
         return
 
     def train(self, dist_dataset, strategy):
