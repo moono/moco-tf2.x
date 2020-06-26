@@ -86,6 +86,15 @@ class MoCoTrainer(object):
         shuffled_data = tf.gather(data, indices=shuffled_idx)
         return shuffled_data, shuffled_idx
 
+    def _batch_unshuffle(self, all_shuffled, shuffled_idx, strategy):
+        all_shuffled = tf.concat(strategy.experimental_local_results(all_shuffled), axis=0)     # [GN, C]
+        shuffled_idx = tf.expand_dims(shuffled_idx, axis=1)                                     # [GN, 1]
+        output_shape = tf.shape(all_shuffled)                                                   # [GN, C]
+
+        tf.print(f'shuffled_k: {all_shuffled}')
+        unshuffled_data = tf.scatter_nd(indices=shuffled_idx, updates=all_shuffled, shape=output_shape)
+        return unshuffled_data
+
     def train(self, dist_dataset, strategy):
         def dist_run_key_encoder(inputs):
             per_replica_result = strategy.experimental_run_v2(fn=self.forward_encoder_k, args=(inputs, ))
@@ -100,7 +109,9 @@ class MoCoTrainer(object):
             dist_run_train_step = tf.function(dist_run_train_step)
 
         for q, k in dist_dataset:
-            # shuffle data on global scale (maybe shuffle index is not needed)
+            # shuffle data on global scale
+            # shuffled_k: [GN, ]
+            # shuffled_idx: [GN, ]
             shuffled_k, shuffled_idx = self._batch_shuffle(k, strategy)
 
             tf.print(f'shuffled_k: {shuffled_k}')
@@ -109,9 +120,9 @@ class MoCoTrainer(object):
             # run on encoder_k to collect shuffled keys
             k_shuffled = dist_run_key_encoder((shuffled_k, ))
 
-            # merge all
-            sk_merged = tf.concat(strategy.experimental_local_results(k_shuffled), axis=0)
-            tf.print(f'merged: {sk_merged}')
+            # unshuffle and merge all
+            k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
+            tf.print(f'k_unshuffled: {k_unshuffled}')
 
             # out = dist_run_train_step((q, k, sk))
 
@@ -162,6 +173,17 @@ def get_toy_dataset(global_batch_size):
 
 
 def main():
+    shuffled_data = tf.constant([[104], [103], [105], [106], [100], [101], [107], [102]])
+    # shuffled_data = tf.squeeze(shuffled_data, axis=1)
+    shuffled_indx = tf.constant([[4], [3], [5], [6], [0], [1], [7], [2]])
+    shape = tf.constant([8, 1])
+
+    print(shuffled_data.shape)
+    print(shuffled_indx.shape)
+    print(shape.shape)
+
+    unshuffled_data = tf.scatter_nd(indices=shuffled_indx, updates=shuffled_data, shape=shape)
+    print(unshuffled_data)
     # batch_size = 4
     # global_batch_size = batch_size * 2
     # dataset = get_toy_dataset(global_batch_size)
@@ -175,21 +197,21 @@ def main():
     #     print(k.shape)
     #     print()
 
-    # prepare distribute training
-    strategy = tf.distribute.MirroredStrategy()
-
-    batch_size = 4
-    global_batch_size = batch_size * strategy.num_replicas_in_sync
-    dataset = get_toy_dataset(global_batch_size)
-
-    # create moco trainer
-    with strategy.scope():
-        moco_trainer = MoCoTrainer(batch_size, global_batch_size)
-
-        dist_dataset = strategy.experimental_distribute_dataset(dataset)
-
-        print('Training...')
-        moco_trainer.train(dist_dataset, strategy)
+    # # prepare distribute training
+    # strategy = tf.distribute.MirroredStrategy()
+    #
+    # batch_size = 4
+    # global_batch_size = batch_size * strategy.num_replicas_in_sync
+    # dataset = get_toy_dataset(global_batch_size)
+    #
+    # # create moco trainer
+    # with strategy.scope():
+    #     moco_trainer = MoCoTrainer(batch_size, global_batch_size)
+    #
+    #     dist_dataset = strategy.experimental_distribute_dataset(dataset)
+    #
+    #     print('Training...')
+    #     moco_trainer.train(dist_dataset, strategy)
     return
 
 
