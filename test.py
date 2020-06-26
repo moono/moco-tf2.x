@@ -97,12 +97,13 @@ class MoCoTrainer(object):
             dist_run_train_step = tf.function(dist_run_train_step)
 
         for q, k, sk, sk_idx in dist_dataset:
-            # run on encoder_k to collect shuffled keys
-            k_shuffled = dist_run_key_encoder((sk, ))
-
-            # merge all
-            sk_merged = tf.concat(strategy.experimental_local_results(k_shuffled), axis=0)
-            tf.print(f'merged: {sk_merged}')
+            print()
+            # # run on encoder_k to collect shuffled keys
+            # k_shuffled = dist_run_key_encoder((sk, ))
+            #
+            # # merge all
+            # sk_merged = tf.concat(strategy.experimental_local_results(k_shuffled), axis=0)
+            # tf.print(f'merged: {sk_merged}')
 
             # out = dist_run_train_step((q, k, sk))
 
