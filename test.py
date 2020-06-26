@@ -65,14 +65,12 @@ class MoCoTrainer(object):
         this_end = this_start + self.batch_size
         this_idx = all_idx[this_start:this_end]
 
+        # get this replica's im_k
         im_k = tf.gather(all_im_k, indices=this_idx)
-        # tf.print(f'{replica_id}: {im_k}')
 
         # compute query features
         k = self.encoder_k(im_k)  # keys: NxC
         k = tf.math.l2_normalize(k, axis=1)
-
-        # tf.print(f'{replica_id}: {k}')
         return k
 
     def train_step(self, inputs):
@@ -92,23 +90,16 @@ class MoCoTrainer(object):
             q = self.encoder_q(im_q)  # queries: NxC
             q = tf.math.l2_normalize(q, axis=1)
 
-            # # should momentum update here?
-            # self._momentum_update_key_encoder()
-
-            # tf.print(f'{replica_id}, k: {k}')
-            # tf.print(f'{replica_id}, q: {q}')
+            # should momentum update here?
+            # ... not working?
 
             # compute logits: Einstein sum is more intuitive
             l_pos = tf.expand_dims(tf.einsum('nc,nc->n', q, k), axis=-1)    # positive logits: Nx1
             l_neg = tf.einsum('nc,kc->nk', q, self.queue)                   # negative logits: NxK
             logits = tf.concat([l_pos, l_neg], axis=1)                      # Nx(K+1)
-            # tf.print(f'l_pos: {l_pos}')
-            # tf.print(f'l_neg: {l_neg}')
-            # tf.print(f'logits: {logits}')
 
             labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
             loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)     # [N, ]
-            # tf.print(f'loss: {loss}')
 
             # scale losses
             loss = tf.reduce_sum(loss) * (1.0 / self.global_batch_size)
@@ -176,18 +167,19 @@ class MoCoTrainer(object):
             # shuffled_idx: [GN, ]
             shuffled_k, shuffled_idx = self._batch_shuffle(im_k, strategy)
 
-            # tf.print(f'shuffled_k: {shuffled_k}')
-            # tf.print(f'shuffled_idx: {shuffled_idx}')
-
             # run on encoder_k to collect shuffled keys
             k_shuffled = dist_run_key_encoder((shuffled_k, ))
 
             # unshuffle and merge all
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
-            # tf.print(f'k_unshuffled: {k_unshuffled}')
 
+            # train step: update queue encoder
             losses = dist_run_train_step((im_q, k_unshuffled))
 
+            # update key encoder
+            self.encoder_k.momentum_update(self.encoder_q)
+
+            # update queue
             self._dequeue_and_enqueue(k_unshuffled)
 
         return
@@ -315,3 +307,64 @@ if __name__ == '__main__':
 #  [ 0.41266525  0.5418896  -0.45740327  0.571704  ]
 #  [ 0.41266528  0.54188955 -0.45740327  0.5717039 ]
 #  [ 0.41266522  0.5418895  -0.45740324  0.5717039 ]]
+
+# keys
+# [[0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.40367246 0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.40367252 0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]]
+#
+# indices
+# [[0] [1] [2] [3] [4] [5] [6] [7]]
+# updated_queue:
+# [[0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.40367246 0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.40367252 0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [-0.6740818  -0.7073098   0.11813977 -0.1771143 ]
+#  [-0.3537059   0.6475618  -0.45937663  0.4944985 ]
+#  [-0.33242273 -0.6241452   0.7024059   0.08101729]
+#  [-0.70300645 -0.2730486  -0.4551356  -0.47336876]
+#  [-0.60927194 -0.03494551 -0.7881595  -0.0798188 ]
+#  [ 0.6838572   0.5050782  -0.2435258  -0.46683028]
+#  [-0.564013    0.4755977   0.30972537 -0.59980536]
+#  [-0.60397404 -0.43192804 -0.66061807 -0.11062176]]
+#
+# keys
+# [[0.4036725  0.22994016 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.6810048 ]
+#  [0.40367252 0.22994016 0.5660464  0.6810048 ]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.56604636 0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.40367252 0.22994015 0.5660464  0.6810047 ]]
+#
+# indices
+# [[ 8] [ 9] [10] [11] [12] [13] [14] [15]]
+#
+# updated_queue:
+# [[0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.40367246 0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.40367252 0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994016 0.5660464  0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.6810048 ]
+#  [0.40367252 0.22994016 0.5660464  0.6810048 ]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.56604636 0.68100476]
+#  [0.4036725  0.22994015 0.5660464  0.68100476]
+#  [0.4036725  0.22994013 0.5660464  0.68100476]
+#  [0.40367252 0.22994015 0.5660464  0.6810047 ]]
