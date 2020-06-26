@@ -38,6 +38,10 @@ class MoCoTrainer(object):
 
         # create the queue
         self.queue, self.queue_ptr = self._setup_queue()
+
+        # create optimizer
+        self.learning_rate = 0.01
+        self.optimizer = tf.keras.optimizers.SGD(self.learning_rate, momentum=0.9, use_nesterov=True)
         return
 
     def _setup_queue(self):
@@ -102,9 +106,16 @@ class MoCoTrainer(object):
             tf.print(f'l_neg: {l_neg}')
             tf.print(f'logits: {logits}')
 
-            labels = tf.zeros(self.batch_size, dtype=tf.int64)  # N
-            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)
+            labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
+            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)     # [N, ]
             tf.print(f'loss: {loss}')
+
+            # scale losses
+            loss = tf.reduce_sum(loss) * (1.0 / self.global_batch_size)
+
+        t_var = self.encoder_q.trainable_variables
+        gradients = tape.gradient(loss, t_var)
+        self.optimizer.apply_gradients(zip(gradients, t_var))
         return
 
     def _batch_shuffle(self, all_gathered, strategy):
