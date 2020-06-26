@@ -39,9 +39,16 @@ class MoCoTrainer(object):
         return q
 
     def forward_encoder_k(self, inputs):
-        im_k = inputs[0]
-        replica_id = tf.distribute.get_replica_context().replica_id_in_sync_group
+        all_im_k = inputs[0]
 
+        # inputs are already shuffled, just take shuffled data respect to their index will suffice
+        all_idx = tf.range(self.global_batch_size)
+        replica_id = tf.distribute.get_replica_context().replica_id_in_sync_group
+        this_start = replica_id * self.batch_size
+        this_end = this_start + self.batch_size
+        this_idx = all_idx[this_start:this_end]
+
+        im_k = tf.gather(all_im_k, indices=this_idx)
         tf.print(f'{replica_id}: {im_k}')
 
         # compute query features
@@ -49,23 +56,6 @@ class MoCoTrainer(object):
         k = tf.math.l2_normalize(k, axis=1)
 
         tf.print(f'{replica_id}: {k}')
-
-        # # inputs are already shuffled,
-        # # just take shuffled data respect to their index will suffice
-        # all_idx = tf.range(self.global_batch_size)
-        # replica_id = tf.distribute.get_replica_context().replica_id_in_sync_group
-        # this_start = replica_id * self.batch_size
-        # this_end = this_start + self.batch_size
-        # this_idx = all_idx[this_start:this_end]
-        #
-        # im_k = tf.gather(all_images, indices=this_idx)
-        #
-        # # run encoder_k
-        # im_k = tf.expand_dims(im_k, axis=1)
-        # k = self.encoder_k(im_k)  # keys: NxC
-        # k = tf.math.l2_normalize(k, axis=1)
-        #
-        # tf.print(f'Run {replica_id}: {im_k}')
         return k
 
     def train_step(self, inputs):
