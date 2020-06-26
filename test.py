@@ -112,14 +112,15 @@ class MoCoTrainer(object):
             # shuffle data on global scale (maybe shuffle index is not needed)
             shuffled_k, shuffled_idx = self._batch_shuffle(k, strategy)
 
-            tf.print(f'{shuffled_k}')
-            tf.print(f'{shuffled_idx}')
-            # # run on encoder_k to collect shuffled keys
-            # k_shuffled = dist_run_key_encoder((sk, ))
-            #
-            # # merge all
-            # sk_merged = tf.concat(strategy.experimental_local_results(k_shuffled), axis=0)
-            # tf.print(f'merged: {sk_merged}')
+            tf.print(f'shuffled_k: {shuffled_k}')
+            tf.print(f'shuffled_idx: {shuffled_idx}')
+
+            # run on encoder_k to collect shuffled keys
+            k_shuffled = dist_run_key_encoder((shuffled_k, ))
+
+            # merge all
+            sk_merged = tf.concat(strategy.experimental_local_results(k_shuffled), axis=0)
+            tf.print(f'merged: {sk_merged}')
 
             # out = dist_run_train_step((q, k, sk))
 
@@ -170,34 +171,34 @@ def get_toy_dataset(global_batch_size):
 
 
 def main():
-    batch_size = 4
-    global_batch_size = batch_size * 2
-    dataset = get_toy_dataset(global_batch_size)
-
-    for q, k in dataset:
-        # tf.print(f'q: {q}')
-        # tf.print(f'k: {k}')
-        # tf.print(f'sk: {sk}')
-        # tf.print(f'sk_idx: {sk_idx}')
-        print(q.shape)
-        print(k.shape)
-        print()
-
-    # # prepare distribute training
-    # strategy = tf.distribute.MirroredStrategy()
-    #
     # batch_size = 4
-    # global_batch_size = batch_size * strategy.num_replicas_in_sync
+    # global_batch_size = batch_size * 2
     # dataset = get_toy_dataset(global_batch_size)
     #
-    # # create moco trainer
-    # with strategy.scope():
-    #     moco_trainer = MoCoTrainer(batch_size, global_batch_size)
-    #
-    #     dist_dataset = strategy.experimental_distribute_dataset(dataset)
-    #
-    #     print('Training...')
-    #     moco_trainer.train(dist_dataset, strategy)
+    # for q, k in dataset:
+    #     # tf.print(f'q: {q}')
+    #     # tf.print(f'k: {k}')
+    #     # tf.print(f'sk: {sk}')
+    #     # tf.print(f'sk_idx: {sk_idx}')
+    #     print(q.shape)
+    #     print(k.shape)
+    #     print()
+
+    # prepare distribute training
+    strategy = tf.distribute.MirroredStrategy()
+
+    batch_size = 4
+    global_batch_size = batch_size * strategy.num_replicas_in_sync
+    dataset = get_toy_dataset(global_batch_size)
+
+    # create moco trainer
+    with strategy.scope():
+        moco_trainer = MoCoTrainer(batch_size, global_batch_size)
+
+        dist_dataset = strategy.experimental_distribute_dataset(dataset)
+
+        print('Training...')
+        moco_trainer.train(dist_dataset, strategy)
     return
 
 
