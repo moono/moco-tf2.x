@@ -37,7 +37,7 @@ class MoCoTrainer(object):
             kw.assign(qw)
 
         # create the queue
-        self.queue, self.queue_ptr = self._setup_queue()
+        self.queue, self.queue_ptr, self.queue_shape = self._setup_queue()
 
         # create optimizer
         self.learning_rate = 0.01
@@ -45,15 +45,16 @@ class MoCoTrainer(object):
         return
 
     def _setup_queue(self):
+        queue_shape = [self.K, self.dim]
         queue_ptr_init = tf.zeros(shape=[], dtype=tf.int64)
-        queue_init = tf.math.l2_normalize(tf.random.normal([self.K, self.dim]), axis=1)
+        queue_init = tf.math.l2_normalize(tf.random.normal(queue_shape), axis=1)
         queue = tf.Variable(queue_init, trainable=False,
                             synchronization=tf.VariableSynchronization.ON_READ,
                             aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
         queue_ptr = tf.Variable(queue_ptr_init, trainable=False,
                                 synchronization=tf.VariableSynchronization.ON_READ,
                                 aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
-        return queue, queue_ptr
+        return queue, queue_ptr, queue_shape
 
     def forward_encoder_k(self, inputs):
         all_im_k = inputs[0]
@@ -95,20 +96,20 @@ class MoCoTrainer(object):
             # # should momentum update here?
             # self._momentum_update_key_encoder()
 
-            tf.print(f'{replica_id}, k: {k}')
-            tf.print(f'{replica_id}, q: {q}')
+            # tf.print(f'{replica_id}, k: {k}')
+            # tf.print(f'{replica_id}, q: {q}')
 
             # compute logits: Einstein sum is more intuitive
             l_pos = tf.expand_dims(tf.einsum('nc,nc->n', q, k), axis=-1)    # positive logits: Nx1
             l_neg = tf.einsum('nc,kc->nk', q, self.queue)                   # negative logits: NxK
             logits = tf.concat([l_pos, l_neg], axis=1)                      # Nx(K+1)
-            tf.print(f'l_pos: {l_pos}')
-            tf.print(f'l_neg: {l_neg}')
-            tf.print(f'logits: {logits}')
+            # tf.print(f'l_pos: {l_pos}')
+            # tf.print(f'l_neg: {l_neg}')
+            # tf.print(f'logits: {logits}')
 
             labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
             loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)     # [N, ]
-            tf.print(f'loss: {loss}')
+            # tf.print(f'loss: {loss}')
 
             # scale losses
             loss = tf.reduce_sum(loss) * (1.0 / self.global_batch_size)
@@ -116,7 +117,7 @@ class MoCoTrainer(object):
         t_var = self.encoder_q.trainable_variables
         gradients = tape.gradient(loss, t_var)
         self.optimizer.apply_gradients(zip(gradients, t_var))
-        return
+        return loss
 
     def _batch_shuffle(self, all_gathered, strategy):
         # convert to tf.Tensor
@@ -138,6 +139,22 @@ class MoCoTrainer(object):
         # tf.print(f'shuffled_k: {all_shuffled}')
         unshuffled_data = tf.scatter_nd(indices=shuffled_idx, updates=all_shuffled, shape=output_shape)
         return unshuffled_data
+
+    def _dequeue_and_enqueue(self, keys):
+        # keys: [GN, C]
+        end_queue_ptr = self.queue_ptr + self.global_batch_size
+        indices = tf.range(self.queue_ptr, end_queue_ptr, dtype=tf.int64)   # [GN,  ]
+        indices = tf.expand_dims(indices, axis=1)                           # [GN, 1]
+
+        tf.print(f'keys: {keys}')
+        tf.print(f'indices: {indices}')
+
+        # queue_update = tf.scatter_update(queue, inds, item)
+        updated_queue = tf.scatter_nd(indices=indices, updates=keys, shape=self.queue_shape)
+
+        tf.print(f'updated_queue: {updated_queue}')
+        self.queue.assign(updated_queue)
+        return
 
     def train(self, dist_dataset, strategy):
         def dist_run_key_encoder(inputs):
@@ -168,7 +185,9 @@ class MoCoTrainer(object):
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
             # tf.print(f'k_unshuffled: {k_unshuffled}')
 
-            out = dist_run_train_step((im_q, k_unshuffled))
+            losses = dist_run_train_step((im_q, k_unshuffled))
+
+            self._dequeue_and_enqueue(k_unshuffled)
 
         return
 
