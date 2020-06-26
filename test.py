@@ -38,7 +38,8 @@ class MoCoTrainer(object):
         q = tf.math.l2_normalize(q, axis=1)
         return q
 
-    def forward_encoder_k(self, im_k):
+    def forward_encoder_k(self, inputs):
+        im_k = inputs[0]
         replica_id = tf.distribute.get_replica_context().replica_id_in_sync_group
 
         tf.print(f'{replica_id}: {im_k}')
