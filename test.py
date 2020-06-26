@@ -91,13 +91,16 @@ class MoCoTrainer(object):
             # # should momentum update here?
             # self._momentum_update_key_encoder()
 
-            # compute logits: Einstein sum is more intuitive
-            l_pos = tf.expand_dims(tf.einsum('nc,nc->n', [q, k]), axis=-1)  # positive logits: Nx1
-            l_neg = tf.einsum('nc,kc->nk', [q, self.queue])                 # negative logits: NxK
-            logits = tf.concat([l_pos, l_neg], axis=1)                      # Nx(K+1)
-            tf.print(f'l_pos: {l_pos}')
-            tf.print(f'l_neg: {l_neg}')
-            tf.print(f'logits: {logits}')
+            tf.print(f'k: {k}')
+            tf.print(f'q: {q}')
+
+            # # compute logits: Einstein sum is more intuitive
+            # l_pos = tf.expand_dims(tf.einsum('nc,nc->n', [q, k]), axis=-1)  # positive logits: Nx1
+            # l_neg = tf.einsum('nc,kc->nk', [q, self.queue])                 # negative logits: NxK
+            # logits = tf.concat([l_pos, l_neg], axis=1)                      # Nx(K+1)
+            # tf.print(f'l_pos: {l_pos}')
+            # tf.print(f'l_neg: {l_neg}')
+            # tf.print(f'logits: {logits}')
         return
 
     def _batch_shuffle(self, all_gathered, strategy):
