@@ -4,7 +4,7 @@ import tensorflow as tf
 class Linear(tf.keras.models.Model):
     def __init__(self, dim, **kwargs):
         super(Linear, self).__init__(**kwargs)
-
+        self.m = 0.999
         self.dense = tf.keras.layers.Dense(dim, use_bias=True)
         return
 
