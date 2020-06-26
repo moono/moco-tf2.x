@@ -41,7 +41,7 @@ class MoCoTrainer(object):
 
         # create optimizer
         self.learning_rate = 0.01
-        self.optimizer = tf.keras.optimizers.SGD(self.learning_rate, momentum=0.9, use_nesterov=True)
+        self.optimizer = tf.keras.optimizers.SGD(self.learning_rate, momentum=0.9, nesterov=True)
         return
 
     def _setup_queue(self):
