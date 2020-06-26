@@ -62,13 +62,13 @@ class MoCoTrainer(object):
         this_idx = all_idx[this_start:this_end]
 
         im_k = tf.gather(all_im_k, indices=this_idx)
-        tf.print(f'{replica_id}: {im_k}')
+        # tf.print(f'{replica_id}: {im_k}')
 
         # compute query features
         k = self.encoder_k(im_k)  # keys: NxC
         k = tf.math.l2_normalize(k, axis=1)
 
-        tf.print(f'{replica_id}: {k}')
+        # tf.print(f'{replica_id}: {k}')
         return k
 
     def train_step(self, inputs):
@@ -91,8 +91,10 @@ class MoCoTrainer(object):
             # # should momentum update here?
             # self._momentum_update_key_encoder()
 
-            tf.print(f'k: {k}')
-            tf.print(f'q: {q}')
+            tf.print(f'{replica_id}, k: {k}')
+            tf.print(f'{replica_id}, q: {q}')
+            print(f'{replica_id}, k: {k}')
+            print(f'{replica_id}, q: {q}')
 
             # # compute logits: Einstein sum is more intuitive
             # l_pos = tf.expand_dims(tf.einsum('nc,nc->n', [q, k]), axis=-1)  # positive logits: Nx1
@@ -120,7 +122,7 @@ class MoCoTrainer(object):
         shuffled_idx = tf.expand_dims(shuffled_idx, axis=1)                                     # [GN, 1]
         output_shape = tf.shape(all_shuffled)                                                   # [GN, C]
 
-        tf.print(f'shuffled_k: {all_shuffled}')
+        # tf.print(f'shuffled_k: {all_shuffled}')
         unshuffled_data = tf.scatter_nd(indices=shuffled_idx, updates=all_shuffled, shape=output_shape)
         return unshuffled_data
 
@@ -143,15 +145,15 @@ class MoCoTrainer(object):
             # shuffled_idx: [GN, ]
             shuffled_k, shuffled_idx = self._batch_shuffle(im_k, strategy)
 
-            tf.print(f'shuffled_k: {shuffled_k}')
-            tf.print(f'shuffled_idx: {shuffled_idx}')
+            # tf.print(f'shuffled_k: {shuffled_k}')
+            # tf.print(f'shuffled_idx: {shuffled_idx}')
 
             # run on encoder_k to collect shuffled keys
             k_shuffled = dist_run_key_encoder((shuffled_k, ))
 
             # unshuffle and merge all
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
-            tf.print(f'k_unshuffled: {k_unshuffled}')
+            # tf.print(f'k_unshuffled: {k_unshuffled}')
 
             out = dist_run_train_step((im_q, k_unshuffled))
 
