@@ -2,10 +2,10 @@ import tensorflow as tf
 
 
 class Linear(tf.keras.models.Model):
-    def __init__(self, **kwargs):
+    def __init__(self, dim, **kwargs):
         super(Linear, self).__init__(**kwargs)
 
-        self.dense = tf.keras.layers.Dense(4, use_bias=True)
+        self.dense = tf.keras.layers.Dense(dim, use_bias=True)
         return
 
     @tf.function
@@ -22,21 +22,34 @@ class Linear(tf.keras.models.Model):
 
 
 class MoCoTrainer(object):
-    def __init__(self, batch_size, global_batch_size):
+    def __init__(self, batch_size, global_batch_size, dim):
         self.use_tf_function = False
+        self.K = 1024
         self.m = 0.999
+        self.dim = dim
         self.batch_size = batch_size
         self.global_batch_size = global_batch_size
 
-        self.encoder_q = Linear()
-        self.encoder_k = Linear()
+        # create the encoders and clone(q -> k)
+        self.encoder_q = Linear(self.dim)
+        self.encoder_k = Linear(self.dim)
+        for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
+            kw.assign(qw)
+
+        # create the queue
+        self.queue, self.queue_ptr = self._setup_queue()
         return
 
-    def forward_encoder_q(self, im_q):
-        # compute query features
-        q = self.encoder_q(im_q)  # queries: NxC
-        q = tf.math.l2_normalize(q, axis=1)
-        return q
+    def _setup_queue(self):
+        queue_ptr_init = tf.zeros(shape=[], dtype=tf.int64)
+        queue_init = tf.math.l2_normalize(tf.random.normal([self.K, self.dim]), axis=1)
+        queue = tf.Variable(queue_init, trainable=False,
+                            synchronization=tf.VariableSynchronization.ON_READ,
+                            aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
+        queue_ptr = tf.Variable(queue_ptr_init, trainable=False,
+                                synchronization=tf.VariableSynchronization.ON_READ,
+                                aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
+        return queue, queue_ptr
 
     def forward_encoder_k(self, inputs):
         all_im_k = inputs[0]
@@ -59,19 +72,32 @@ class MoCoTrainer(object):
         return k
 
     def train_step(self, inputs):
-        im_q, im_k, shuffled_im_k = inputs
+        im_q, all_k = inputs
 
-        im_q = tf.expand_dims(im_q, axis=1)
+        # get appropriate ks
+        all_idx = tf.range(self.global_batch_size)
+        replica_id = tf.distribute.get_replica_context().replica_id_in_sync_group
+        this_start = replica_id * self.batch_size
+        this_end = this_start + self.batch_size
+        this_idx = all_idx[this_start:this_end]
+        k = tf.gather(all_k, indices=this_idx)
 
         with tf.GradientTape() as tape:
+
             # compute query features
-            q = self.forward_encoder_q(im_q)  # queries: NxC
+            q = self.encoder_q(im_q)  # queries: NxC
+            q = tf.math.l2_normalize(q, axis=1)
 
             # # should momentum update here?
             # self._momentum_update_key_encoder()
 
-            # compute key features with shuffled data
-            k = self.forward_encoder_k(shuffled_im_k)
+            # compute logits: Einstein sum is more intuitive
+            l_pos = tf.expand_dims(tf.einsum('nc,nc->n', [q, k]), axis=-1)  # positive logits: Nx1
+            l_neg = tf.einsum('nc,kc->nk', [q, self.queue])                 # negative logits: NxK
+            logits = tf.concat([l_pos, l_neg], axis=1)                      # Nx(K+1)
+            tf.print(f'l_pos: {l_pos}')
+            tf.print(f'l_neg: {l_neg}')
+            tf.print(f'logits: {logits}')
         return
 
     def _batch_shuffle(self, all_gathered, strategy):
@@ -108,11 +134,11 @@ class MoCoTrainer(object):
             dist_run_key_encoder = tf.function(dist_run_key_encoder)
             dist_run_train_step = tf.function(dist_run_train_step)
 
-        for q, k in dist_dataset:
+        for im_q, im_k in dist_dataset:
             # shuffle data on global scale
             # shuffled_k: [GN, ]
             # shuffled_idx: [GN, ]
-            shuffled_k, shuffled_idx = self._batch_shuffle(k, strategy)
+            shuffled_k, shuffled_idx = self._batch_shuffle(im_k, strategy)
 
             tf.print(f'shuffled_k: {shuffled_k}')
             tf.print(f'shuffled_idx: {shuffled_idx}')
@@ -124,7 +150,7 @@ class MoCoTrainer(object):
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
             tf.print(f'k_unshuffled: {k_unshuffled}')
 
-            # out = dist_run_train_step((q, k, sk))
+            out = dist_run_train_step((im_q, k_unshuffled))
 
         return
 
@@ -185,29 +211,30 @@ def main():
     # unshuffled_data = tf.scatter_nd(indices=shuffled_indx, updates=shuffled_data, shape=shape)
     # print(unshuffled_data)
 
-    batch_size = 4
-    global_batch_size = batch_size * 2
-    dataset = get_toy_dataset(global_batch_size)
-
-    for q, k in dataset:
-        # tf.print(f'q: {q}')
-        # tf.print(f'k: {k}')
-        # tf.print(f'sk: {sk}')
-        # tf.print(f'sk_idx: {sk_idx}')
-        print(q.shape)
-        print(k.shape)
-        print()
+    # batch_size = 4
+    # global_batch_size = batch_size * 2
+    # dataset = get_toy_dataset(global_batch_size)
+    #
+    # for q, k in dataset:
+    #     # tf.print(f'q: {q}')
+    #     # tf.print(f'k: {k}')
+    #     # tf.print(f'sk: {sk}')
+    #     # tf.print(f'sk_idx: {sk_idx}')
+    #     print(q.shape)
+    #     print(k.shape)
+    #     print()
 
     # prepare distribute training
     strategy = tf.distribute.MirroredStrategy()
 
+    dim = 4
     batch_size = 4
     global_batch_size = batch_size * strategy.num_replicas_in_sync
     dataset = get_toy_dataset(global_batch_size)
 
     # create moco trainer
     with strategy.scope():
-        moco_trainer = MoCoTrainer(batch_size, global_batch_size)
+        moco_trainer = MoCoTrainer(batch_size, global_batch_size, dim)
 
         dist_dataset = strategy.experimental_distribute_dataset(dataset)
 
@@ -218,3 +245,35 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# shuffled_idx: [1 6 2 4 7 5 3 0]
+# 0
+# [[ 0.41266525  0.54188955 -0.45740324  0.5717039 ]
+#  [ 0.41266528  0.54188955 -0.45740327  0.5717039 ]
+#  [ 0.41266522  0.54188955 -0.45740327  0.5717039 ]
+#  [ 0.41266525  0.54188955 -0.45740327  0.5717039 ]]
+# 1
+# [[ 0.41266522  0.5418895  -0.45740324  0.5717039 ]
+#  [ 0.41266525  0.5418896  -0.45740327  0.571704  ]
+#  [ 0.41266525  0.54188955 -0.45740327  0.57170385]
+#  [ 0.41266525  0.54188955 -0.45740324  0.57170385]]
+#
+# merged_shuffled
+# [[ 0.41266525  0.54188955 -0.45740324  0.5717039 ]
+#  [ 0.41266528  0.54188955 -0.45740327  0.5717039 ]
+#  [ 0.41266522  0.54188955 -0.45740327  0.5717039 ]
+#  [ 0.41266525  0.54188955 -0.45740327  0.5717039 ]
+#  [ 0.41266522  0.5418895  -0.45740324  0.5717039 ]
+#  [ 0.41266525  0.5418896  -0.45740327  0.571704  ]
+#  [ 0.41266525  0.54188955 -0.45740327  0.57170385]
+#  [ 0.41266525  0.54188955 -0.45740324  0.57170385]]
+#
+# merged_unshuffled
+# [[ 0.41266525  0.54188955 -0.45740324  0.57170385]
+#  [ 0.41266525  0.54188955 -0.45740324  0.5717039 ]
+#  [ 0.41266522  0.54188955 -0.45740327  0.5717039 ]
+#  [ 0.41266525  0.54188955 -0.45740327  0.57170385]
+#  [ 0.41266525  0.54188955 -0.45740327  0.5717039 ]
+#  [ 0.41266525  0.5418896  -0.45740327  0.571704  ]
+#  [ 0.41266528  0.54188955 -0.45740327  0.5717039 ]
+#  [ 0.41266522  0.5418895  -0.45740324  0.5717039 ]]
