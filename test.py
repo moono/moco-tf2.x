@@ -95,9 +95,9 @@ class MoCoTrainer(object):
             tf.print(f'{replica_id}, q: {q}')
 
             # compute logits: Einstein sum is more intuitive
-            l_pos = tf.einsum('nc,nc->n', [q, k])  # positive logits: Nx1
+            l_pos = tf.einsum('nc,nc->n', q, k)  # positive logits: Nx1
             # l_pos = tf.expand_dims(tf.einsum('nc,nc->n', [q, k]), axis=-1)  # positive logits: Nx1
-            l_neg = tf.einsum('nc,kc->nk', [q, self.queue])                 # negative logits: NxK
+            l_neg = tf.einsum('nc,kc->nk', q, self.queue)                 # negative logits: NxK
             # logits = tf.concat([l_pos, l_neg], axis=1)                      # Nx(K+1)
             tf.print(f'l_pos: {l_pos}')
             tf.print(f'l_neg: {l_neg}')
