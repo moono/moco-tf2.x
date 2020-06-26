@@ -133,6 +133,8 @@ def shuffle_fn(data_q, data_k, batch_size):
 
     # shuffle
     shuffled_data_k = tf.gather(data_k, indices=shuffled_idx)
+
+    shuffled_idx = tf.expand_dims(shuffled_idx, axis=1)
     return data_q, data_k, shuffled_data_k, shuffled_idx
 
 
@@ -156,10 +158,14 @@ def main():
     # dataset = get_toy_dataset(global_batch_size)
     #
     # for q, k, sk, sk_idx in dataset:
-    #     tf.print(f'q: {q}')
-    #     tf.print(f'k: {k}')
-    #     tf.print(f'sk: {sk}')
-    #     tf.print(f'sk_idx: {sk_idx}')
+    #     # tf.print(f'q: {q}')
+    #     # tf.print(f'k: {k}')
+    #     # tf.print(f'sk: {sk}')
+    #     # tf.print(f'sk_idx: {sk_idx}')
+    #     print(q.shape)
+    #     print(k.shape)
+    #     print(sk.shape)
+    #     print(sk_idx.shape)
     #     print()
 
     # prepare distribute training
