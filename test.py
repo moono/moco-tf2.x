@@ -37,7 +37,7 @@ class MoCoTrainer(object):
             kw.assign(qw)
 
         # create the queue
-        self.queue, self.queue_ptr, self.queue_shape = self._setup_queue()
+        self.queue, self.queue_ptr = self._setup_queue()
 
         # create optimizer
         self.learning_rate = 0.01
@@ -45,16 +45,15 @@ class MoCoTrainer(object):
         return
 
     def _setup_queue(self):
-        queue_shape = [self.K, self.dim]
         queue_ptr_init = tf.zeros(shape=[], dtype=tf.int64)
-        queue_init = tf.math.l2_normalize(tf.random.normal(queue_shape), axis=1)
+        queue_init = tf.math.l2_normalize(tf.random.normal([self.K, self.dim]), axis=1)
         queue = tf.Variable(queue_init, trainable=False,
                             synchronization=tf.VariableSynchronization.ON_READ,
                             aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
         queue_ptr = tf.Variable(queue_ptr_init, trainable=False,
                                 synchronization=tf.VariableSynchronization.ON_READ,
                                 aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
-        return queue, queue_ptr, queue_shape
+        return queue, queue_ptr
 
     def forward_encoder_k(self, inputs):
         all_im_k = inputs[0]
@@ -149,7 +148,7 @@ class MoCoTrainer(object):
         tf.print(f'keys: {keys}')
         tf.print(f'indices: {indices}')
 
-        updated_queue = tf.scatter_nd(indices=indices, updates=keys, shape=self.queue_shape)
+        updated_queue = tf.tensor_scatter_nd_update(tensor=self.queue, indices=indices, updates=keys)
         updated_queue_ptr = end_queue_ptr % self.K
 
         tf.print(f'updated_queue: {updated_queue}')
