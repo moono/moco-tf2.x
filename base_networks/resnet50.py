@@ -150,7 +150,7 @@ def test_compare():
 def test_raw():
     res = 224
     classes = 512
-    resnet50 = Resnet50(res=res, classes=classes, with_projection_head=False)
+    resnet50 = Resnet50(res=res, classes=classes, with_projection_head=True, name='encoder')
     _ = resnet50(tf.random.normal(shape=[1, res, res, 3]))
     resnet50.summary()
     print(_.shape)
