@@ -107,8 +107,26 @@ def get_model(res, classes, with_projection_head=False):
     return model
 
 
+# wrap again for distribute training momentum update
+class Resnet50(models.Model):
+    def __init__(self, res, classes, with_projection_head, **kwargs):
+        super(Resnet50, self).__init__(**kwargs)
+        self.resnet50 = get_model(res=res, classes=classes, with_projection_head=with_projection_head)
+        return
+
+    @tf.function
+    def momentum_update(self, src_net, m):
+        for qw, kw in zip(src_net.weights, self.weights):
+            assert qw.shape == kw.shape
+            kw.assign(kw * m + qw * (1.0 - m))
+        return
+
+    def call(self, inputs, training=None, mask=None):
+        return self.resnet50(inputs)
+
+
 def test_compare():
-    from tensorflow.keras.applications.resnet50 import ResNet50
+    from tensorflow.keras.applications.resnet50 import ResNet50 as OfficialResnet50
 
     res = 224
     classes = 1000
@@ -116,27 +134,31 @@ def test_compare():
     # Total params: 25,636,712
     # Trainable params: 25,583,592
     # Non-trainable params: 53,120
-    official = ResNet50(include_top=True, weights=None, input_shape=(res, res, 3), pooling=None, classes=classes)
+    official = OfficialResnet50(include_top=True, weights=None, input_shape=(res, res, 3), pooling=None, classes=classes)
     official.summary()
 
     # Total params: 25,636,712
     # Trainable params: 25,583,592
     # Non-trainable params: 53,120
-    resnet50 = get_model(res=res, classes=classes, with_projection_head=False)
+    resnet50 = Resnet50(res=res, classes=classes, with_projection_head=False)
+    _ = resnet50(tf.random.normal(shape=[1, res, res, 3]))
     resnet50.summary()
+    print(_.shape)
     return
 
 
 def test_raw():
     res = 224
     classes = 512
-    resnet50 = get_model(res=res, classes=classes, with_projection_head=True)
+    resnet50 = Resnet50(res=res, classes=classes, with_projection_head=False)
+    _ = resnet50(tf.random.normal(shape=[1, res, res, 3]))
     resnet50.summary()
+    print(_.shape)
     return
 
 
 def main():
-    # test_compare()
+    test_compare()
     test_raw()
     return
 
