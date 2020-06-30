@@ -109,9 +109,12 @@ def get_model(res, classes, with_projection_head=False):
 
 # wrap again for distribute training momentum update
 class Resnet50(models.Model):
-    def __init__(self, res, classes, with_projection_head, **kwargs):
+    def __init__(self, resnet_params, **kwargs):
         super(Resnet50, self).__init__(**kwargs)
-        self.resnet50 = get_model(res=res, classes=classes, with_projection_head=with_projection_head)
+        self.resnet50 = get_model(
+            res=resnet_params['input_shape'][0],
+            classes=resnet_params['last_dim'],
+            with_projection_head=resnet_params['with_projection_head'])
         return
 
     @tf.function
@@ -130,18 +133,24 @@ def test_compare():
 
     res = 224
     classes = 1000
+    input_shape = [res, res, 3]
+    resnet_params = {
+        'input_shape': input_shape,
+        'last_dim': classes,
+        'with_projection_head': False,
+    }
 
     # Total params: 25,636,712
     # Trainable params: 25,583,592
     # Non-trainable params: 53,120
-    official = OfficialResnet50(include_top=True, weights=None, input_shape=(res, res, 3), pooling=None, classes=classes)
+    official = OfficialResnet50(include_top=True, weights=None, input_shape=input_shape, pooling=None, classes=classes)
     official.summary()
 
     # Total params: 25,636,712
     # Trainable params: 25,583,592
     # Non-trainable params: 53,120
-    resnet50 = Resnet50(res=res, classes=classes, with_projection_head=False)
-    _ = resnet50(tf.random.normal(shape=[1, res, res, 3]))
+    resnet50 = Resnet50(resnet_params)
+    _ = resnet50(tf.random.normal(shape=[1] + resnet_params['input_shape']))
     resnet50.summary()
     print(_.shape)
     return
@@ -150,8 +159,13 @@ def test_compare():
 def test_raw():
     res = 224
     classes = 512
-    resnet50 = Resnet50(res=res, classes=classes, with_projection_head=True, name='encoder')
-    _ = resnet50(tf.random.normal(shape=[1, res, res, 3]))
+    resnet_params = {
+        'input_shape': [res, res, 3],
+        'last_dim': classes,
+        'with_projection_head': True,
+    }
+    resnet50 = Resnet50(resnet_params, name='encoder')
+    _ = resnet50(tf.random.normal(shape=[1] + resnet_params['input_shape']))
     resnet50.summary()
     print(_.shape)
     return
