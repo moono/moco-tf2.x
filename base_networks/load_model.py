@@ -8,7 +8,7 @@ def get_proper_module(module_name, object_name):
     return obj
 
 
-def load_model(name, network_name, network_params, trainable):
+def load_model(name, network_name, network_params, trainable, weight_decay=None):
     class_name_table = {
         'resnet50': 'Resnet50',
         'linear': 'Linear',
@@ -20,6 +20,15 @@ def load_model(name, network_name, network_params, trainable):
     test_input_images = tf.random.normal(shape=[1] + network_params['input_shape'])
     _ = m(test_input_images)
 
+    # set weight decay
+    if weight_decay is not None:
+        for layer in m.layers:
+            if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
+                layer.add_loss(lambda: tf.keras.regularizers.l2(weight_decay)(layer.kernel))
+            if hasattr(layer, 'bias_regularizer') and layer.use_bias:
+                layer.add_loss(lambda: tf.keras.regularizers.l2(weight_decay)(layer.bias))
+
+    # set trainable or not
     if not trainable:
         for layer in m.layers:
             layer.trainable = False
@@ -35,8 +44,8 @@ def main():
         'input_shape': [4],
         'dim': 4,
     }
-    linear_q = load_model(name='linear_q', network_name='linear', network_params=linear_params, trainable=True)
-    linear_k = load_model(name='linear_k', network_name='linear', network_params=linear_params, trainable=False)
+    linear_q = load_model('linear_q', network_name='linear', network_params=linear_params, trainable=True, weight_decay=0.001)
+    linear_k = load_model('linear_k', network_name='linear', network_params=linear_params, trainable=False, weight_decay=0.001)
     print(linear_q.summary())
     print(linear_k.summary())
 

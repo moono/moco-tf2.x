@@ -68,8 +68,8 @@ class MoCo(object):
         self.T = t_params['network_params']['T']
 
         # create the encoders and clone(q -> k)
-        self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True)
-        self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=False)
+        self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True, weight_decay=t_params['weight_decay'])
+        self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=False, weight_decay=t_params['weight_decay'])
         for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
             kw.assign(qw)
 
@@ -201,8 +201,12 @@ class MoCo(object):
             labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
             loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)  # [N, ]
 
+            # weight regularization loss
+            l2_w_reg = tf.add_n(self.encoder_q.losses)
+
             # scale losses
             loss = tf.reduce_sum(loss) * (1.0 / self.global_batch_size)
+            loss += l2_w_reg
 
         t_var = self.encoder_q.trainable_variables
         gradients = tape.gradient(loss, t_var)
@@ -307,6 +311,7 @@ def main():
     parser.add_argument('--initial_lr', default=0.003, type=float)
     parser.add_argument('--lr_decay_factor', default=0.1, type=float)
     parser.add_argument('--lr_decay_boundaries', nargs='*', type=int)   # takes list of ints
+    parser.add_argument('--weight_decay_factor', default=0.0001, type=float)
     args = vars(parser.parse_args())
 
     # default lr_decay_boundaries value
@@ -340,6 +345,7 @@ def main():
         # training params
         'n_images': args['dataset_n_images'],
         'epochs': args['epochs'],
+        'weight_decay': args['weight_decay_factor'],
         'initial_lr': args['initial_lr'],
         'lr_decay': args['lr_decay_factor'],
         'lr_decay_boundaries': args['lr_decay_boundaries'],
