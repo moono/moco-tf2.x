@@ -24,6 +24,10 @@ def load_model(name, network_name, res, dim, mlp, trainable):
 
 
 def main():
+    from misc.tf_utils import allow_memory_growth
+
+    allow_memory_growth()
+
     resnet50_q = load_model(name='encoder_q', network_name='resnet50', res=224, dim=512, mlp=True, trainable=True)
     resnet50_k = load_model(name='encoder_k', network_name='resnet50', res=224, dim=512, mlp=True, trainable=False)
     print(resnet50_q.summary())
