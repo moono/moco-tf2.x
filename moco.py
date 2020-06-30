@@ -7,11 +7,11 @@ from datasets.toy_dataset import get_dataset as get_toy_dataset
 from base_networks.load_model import load_model
 
 
-FULL_MOCO_PARAMS = {
+ALL_MOCO_PARAMS = {
     # debugging
     0: {
         'base_encoder': 'linear',
-        'network_params': {'input_shape': [4], 'dim': 4, 'K': 16, 'm': 0.999, 'T': 0.07}
+        'network_params': {'input_shape': [1], 'dim': 4, 'K': 16, 'm': 0.999, 'T': 0.07}
     },
     # MoCo v1
     1: {
@@ -34,24 +34,19 @@ class MoCo(object):
         self.name = t_params['name']
         self.use_tf_function = t_params['use_tf_function']
         self.model_base_dir = t_params['model_base_dir']
+        self.batch_size = t_params['batch_size_per_replica']
+        self.global_batch_size = t_params['global_batch_size']
 
         # moco parameters
         self.base_encoder = t_params['base_encoder']
-        self.network_params = t_params['network_params']
         self.dim = t_params['network_params']['dim']
-        # self.res = t_params['res']
         self.K = t_params['network_params']['K']
         self.m = t_params['network_params']['m']
         self.T = t_params['network_params']['T']
-        # self.mlp = t_params.get('mlp', False)
-
-        self.batch_size = t_params['batch_size_per_replica']
-        self.global_batch_size = t_params['global_batch_size']
-        self.n_replicas = t_params['n_replicas']
 
         # create the encoders and clone(q -> k)
-        self.encoder_q = load_model('encoder_q', self.base_encoder, self.network_params, trainable=True)
-        self.encoder_k = load_model('encoder_k', self.base_encoder, self.network_params, trainable=False)
+        self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True)
+        self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=False)
         for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
             kw.assign(qw)
 
@@ -93,28 +88,21 @@ class MoCo(object):
         return shuffled_data, shuffled_idx
 
     def _batch_unshuffle(self, all_shuffled, shuffled_idx, strategy):
-        all_shuffled = tf.concat(strategy.experimental_local_results(all_shuffled), axis=0)  # [GN, C]
-        shuffled_idx = tf.expand_dims(shuffled_idx, axis=1)  # [GN, 1]
-        output_shape = tf.shape(all_shuffled)  # [GN, C]
-
-        # tf.print(f'shuffled_k: {all_shuffled}')
+        all_shuffled = tf.concat(strategy.experimental_local_results(all_shuffled), axis=0)     # [GN, C]
+        shuffled_idx = tf.expand_dims(shuffled_idx, axis=1)                                     # [GN, 1]
+        output_shape = tf.shape(all_shuffled)                                                   # [GN, C]
         unshuffled_data = tf.scatter_nd(indices=shuffled_idx, updates=all_shuffled, shape=output_shape)
         return unshuffled_data
 
     def _dequeue_and_enqueue(self, keys):
         # keys: [GN, C]
         end_queue_ptr = self.queue_ptr + self.global_batch_size
-        indices = tf.range(self.queue_ptr, end_queue_ptr, dtype=tf.int64)  # [GN,  ]
-        indices = tf.expand_dims(indices, axis=1)  # [GN, 1]
-
-        tf.print(f'keys: {keys}')
-        tf.print(f'indices: {indices}')
+        indices = tf.range(self.queue_ptr, end_queue_ptr, dtype=tf.int64)   # [GN,  ]
+        indices = tf.expand_dims(indices, axis=1)                           # [GN, 1]
 
         updated_queue = tf.tensor_scatter_nd_update(tensor=self.queue, indices=indices, updates=keys)
         updated_queue_ptr = end_queue_ptr % self.K
 
-        tf.print(f'updated_queue: {updated_queue}')
-        tf.print(f'updated_queue_ptr: {updated_queue_ptr}')
         self.queue.assign(updated_queue)
         self.queue_ptr.assign(updated_queue_ptr)
         return
@@ -140,7 +128,7 @@ class MoCo(object):
     def train_step(self, inputs):
         im_q, all_k = inputs
 
-        # get appropriate ks
+        # get appropriate keys
         all_idx = tf.range(self.global_batch_size)
         replica_id = tf.distribute.get_replica_context().replica_id_in_sync_group
         this_start = replica_id * self.batch_size
@@ -154,9 +142,16 @@ class MoCo(object):
             q = tf.math.l2_normalize(q, axis=1)
 
             # compute logits: Einstein sum is more intuitive
-            l_pos = tf.expand_dims(tf.einsum('nc,nc->n', q, k), axis=-1)  # positive logits: Nx1
-            l_neg = tf.einsum('nc,kc->nk', q, self.queue)  # negative logits: NxK
-            logits = tf.concat([l_pos, l_neg], axis=1)  # Nx(K+1)
+            # positive logits: Nx1
+            l_pos = tf.expand_dims(tf.einsum('nc,nc->n', q, k), axis=-1)
+            # negative logits: NxK
+            l_neg = tf.einsum('nc,kc->nk', q, self.queue)
+
+            # logits: Nx(1+K)
+            logits = tf.concat([l_pos, l_neg], axis=1)
+
+            # apply temperature
+            logits /= self.T
 
             labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
             loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)  # [N, ]
@@ -184,12 +179,12 @@ class MoCo(object):
 
         for im_q, im_k in dist_dataset:
             # shuffle data on global scale
-            # shuffled_k: [GN, ]
+            # shuffled_im_k: [GN, ]
             # shuffled_idx: [GN, ]
-            shuffled_k, shuffled_idx = self._batch_shuffle(im_k, strategy)
+            shuffled_im_k, shuffled_idx = self._batch_shuffle(im_k, strategy)
 
             # run on encoder_k to collect shuffled keys
-            k_shuffled = dist_encode_key((shuffled_k,))
+            k_shuffled = dist_encode_key((shuffled_im_k, ))
 
             # unshuffle and merge all
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
@@ -217,7 +212,7 @@ def main():
     parser.add_argument('--dataset_name', default='toy', type=str)
     parser.add_argument('--moco_version', default=0, type=int)
     parser.add_argument('--base_encoder', default='linear', type=str)
-    parser.add_argument('--batch_size_per_replica', default=8, type=int)
+    parser.add_argument('--batch_size_per_replica', default=4, type=int)
     parser.add_argument('--epochs', default=2, type=int)
     parser.add_argument('--initial_learning_rate', default=0.001, type=float)
     args = vars(parser.parse_args())
@@ -230,7 +225,7 @@ def main():
 
     # get MoCo parameters
     assert args['moco_version'] in [0, 1, 2]
-    moco_params = FULL_MOCO_PARAMS[args['moco_version']]
+    moco_params = ALL_MOCO_PARAMS[args['moco_version']]
 
     # prepare distribute training
     strategy = tf.distribute.MirroredStrategy()
@@ -251,7 +246,6 @@ def main():
         'initial_learning_rate': args['initial_learning_rate'],
         'batch_size_per_replica': args['batch_size_per_replica'],
         'global_batch_size': global_batch_size,
-        'n_replicas': strategy.num_replicas_in_sync,
     }
 
     # load dataset
