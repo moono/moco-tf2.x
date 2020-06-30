@@ -1,6 +1,10 @@
+import os
+import time
 import argparse
+import numpy as np
 import tensorflow as tf
 
+from pprint import pprint as pp
 from misc.utils import str_to_bool
 from misc.tf_utils import allow_memory_growth, split_gpu_for_testing
 from datasets.toy_dataset import get_dataset as get_toy_dataset
@@ -26,6 +30,19 @@ ALL_MOCO_PARAMS = {
 }
 
 
+def constant_learning_rate_decay(global_batch_size, n_images, initial_lr, decay, epoch_decay):
+    assert isinstance(global_batch_size, int) and isinstance(n_images, int)
+    assert isinstance(initial_lr, float) and isinstance(decay, float)
+    assert isinstance(epoch_decay, list) and isinstance(all(epoch_decay), int)
+
+    images_per_step = n_images / global_batch_size
+    boundaries_steps = [int(val * images_per_step) for val in epoch_decay]
+    values = [initial_lr] + [initial_lr * (decay ** (p + 1)) for p in range(len(boundaries_steps))]
+
+    schedule = tf.optimizers.schedules.PiecewiseConstantDecay(boundaries_steps, values)
+    return schedule
+
+
 class MoCo(object):
     def __init__(self, t_params):
         assert t_params['base_encoder'] in ['resnet50', 'linear']
@@ -36,6 +53,12 @@ class MoCo(object):
         self.model_base_dir = t_params['model_base_dir']
         self.batch_size = t_params['batch_size_per_replica']
         self.global_batch_size = t_params['global_batch_size']
+        self.n_images = t_params['n_images']
+        self.max_steps = int(np.ceil(self.n_images / self.global_batch_size))
+        self.reached_max_steps = False
+        self.print_step = 50
+        self.save_step = 200
+        self.image_summary_step = 200
 
         # moco parameters
         self.base_encoder = t_params['base_encoder']
@@ -54,10 +77,31 @@ class MoCo(object):
         self.queue, self.queue_ptr = self._setup_queue()
 
         # create optimizer
-        self.learning_rate = tf.Variable(t_params['initial_learning_rate'], trainable=False,
-                                         synchronization=tf.VariableSynchronization.ON_READ,
-                                         aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
-        self.optimizer = tf.keras.optimizers.SGD(self.learning_rate, momentum=0.9, nesterov=True)
+        self.lr_schedule = constant_learning_rate_decay(self.global_batch_size,
+                                                        t_params['n_images'],
+                                                        t_params['initial_lr'],
+                                                        t_params['lr_decay'],
+                                                        t_params['lr_decay_boundaries'])
+        self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule, momentum=0.9, nesterov=True)
+
+        # setup saving locations (object based savings)
+        self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
+        self.ckpt = tf.train.Checkpoint(optimizer=self.optimizer, encoder_q=self.encoder_q, encoder_k=self.encoder_k)
+        self.manager = tf.train.CheckpointManager(self.ckpt, self.ckpt_dir, max_to_keep=2)
+
+        # try to restore
+        self.ckpt.restore(self.manager.latest_checkpoint)
+        if self.manager.latest_checkpoint:
+            print('Restored from {}'.format(self.manager.latest_checkpoint))
+
+            # check if already trained in this resolution
+            restored_step = self.optimizer.iterations.numpy()
+            if restored_step >= self.max_steps:
+                print('Already reached max steps {}/{}'.format(restored_step, self.max_steps))
+                self.reached_max_steps = True
+                return
+        else:
+            print('Not restoring from saved checkpoint')
         return
 
     def _setup_queue(self):
@@ -153,6 +197,7 @@ class MoCo(object):
             # apply temperature
             logits /= self.T
 
+            # labels: positive key indicators
             labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
             loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)  # [N, ]
 
@@ -170,14 +215,29 @@ class MoCo(object):
             return per_replica_result
 
         def dist_train_step(inputs):
-            per_replica_result = strategy.experimental_run_v2(fn=self.train_step, args=(inputs,))
-            return per_replica_result
+            per_replica_losses = strategy.experimental_run_v2(fn=self.train_step, args=(inputs,))
+            mean_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None)
+            return mean_loss
 
         if self.use_tf_function:
             dist_encode_key = tf.function(dist_encode_key)
             dist_train_step = tf.function(dist_train_step)
 
+        if self.reached_max_steps:
+            return
+
+        # setup tensorboards
+        train_summary_writer = tf.summary.create_file_writer(self.ckpt_dir)
+
+        # loss metrics
+        metric_loss = tf.keras.metrics.Mean('loss', dtype=tf.float32)
+
+        # start actual training
+        print(f'max_steps: {self.max_steps}')
+        t_start = time.time()
         for im_q, im_k in dist_dataset:
+            # train step
+
             # shuffle data on global scale
             # shuffled_im_k: [GN, ]
             # shuffled_idx: [GN, ]
@@ -190,7 +250,7 @@ class MoCo(object):
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
 
             # train step: update queue encoder
-            losses = dist_train_step((im_q, k_unshuffled))
+            loss = dist_train_step((im_q, k_unshuffled))
 
             # update key encoder
             self.encoder_k.momentum_update(self.encoder_q, self.m)
@@ -198,6 +258,35 @@ class MoCo(object):
             # update queue
             self._dequeue_and_enqueue(k_unshuffled)
 
+            # update metrics
+            metric_loss(loss)
+
+            # get current step
+            step = self.optimizer.iterations.numpy()
+
+            # save to tensorboard
+            with train_summary_writer.as_default():
+                tf.summary.scalar('loss', metric_loss.result(), step=step)
+
+            # print every self.print_steps
+            if step % self.print_step == 0:
+                elapsed = time.time() - t_start
+                print('[step: {}] elapsed {:.2f}s, loss {:.3f}'.format(step, elapsed, loss.numpy()))
+
+                # reset timer
+                t_start = time.time()
+
+            # save every self.save_step
+            if step % self.save_step == 0:
+                self.manager.save(checkpoint_number=step)
+
+            # check exit status
+            if step >= self.max_steps:
+                break
+
+        # save last checkpoint
+        step = self.optimizer.iterations.numpy()
+        self.manager.save(checkpoint_number=step)
         return
 
 
@@ -206,16 +295,23 @@ def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=False)
     parser.add_argument('--debug_split_gpu', type=str_to_bool, nargs='?', const=True, default=True)
-    parser.add_argument('--use_tf_function', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--use_tf_function', type=str_to_bool, nargs='?', const=True, default=True)
     parser.add_argument('--name', default='debugging', type=str)
     parser.add_argument('--model_base_dir', default='./models', type=str)
     parser.add_argument('--dataset_name', default='toy', type=str)
+    parser.add_argument('--dataset_n_images', default=1000000, type=int)
     parser.add_argument('--moco_version', default=0, type=int)
     parser.add_argument('--base_encoder', default='linear', type=str)
-    parser.add_argument('--batch_size_per_replica', default=4, type=int)
-    parser.add_argument('--epochs', default=2, type=int)
-    parser.add_argument('--initial_learning_rate', default=0.001, type=float)
+    parser.add_argument('--batch_size_per_replica', default=32, type=int)
+    parser.add_argument('--epochs', default=200, type=int)
+    parser.add_argument('--initial_lr', default=0.003, type=float)
+    parser.add_argument('--lr_decay_factor', default=0.1, type=float)
+    parser.add_argument('--lr_decay_boundaries', nargs='*', type=int)   # takes list of ints
     args = vars(parser.parse_args())
+
+    # default lr_decay_boundaries value
+    if args['lr_decay_boundaries'] is None:
+        args['lr_decay_boundaries'] = [120, 160]
 
     # GPU environment settings
     if args['allow_memory_growth']:
@@ -242,15 +338,21 @@ def main():
         **moco_params,
 
         # training params
+        'n_images': args['dataset_n_images'],
         'epochs': args['epochs'],
-        'initial_learning_rate': args['initial_learning_rate'],
+        'initial_lr': args['initial_lr'],
+        'lr_decay': args['lr_decay_factor'],
+        'lr_decay_boundaries': args['lr_decay_boundaries'],
         'batch_size_per_replica': args['batch_size_per_replica'],
         'global_batch_size': global_batch_size,
     }
 
+    # print current details
+    pp(training_parameters)
+
     # load dataset
     if args['dataset_name']:
-        dataset = get_toy_dataset(global_batch_size)
+        dataset = get_toy_dataset(global_batch_size, args['dataset_n_images'], args['epochs'])
     else:
         dataset = None
 

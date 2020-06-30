@@ -15,14 +15,15 @@ def two_crops(data):
     return data_q, data_k
 
 
-def get_dataset(global_batch_size):
-    # Total data length: T
+def get_dataset(global_batch_size, n_images, epochs):
     # global batch size: N
-    T = global_batch_size * 5
-    data = tf.range(100, 100 + T)           # [T,  ]
+    # n_images: T
+    data = tf.range(0, 100 + n_images)      # [T,  ]
     data = tf.expand_dims(data, axis=1)     # [T, 1]
 
     dataset = tf.data.Dataset.from_tensor_slices((data, ))
     dataset = dataset.map(map_func=lambda d: two_crops(d), num_parallel_calls=8)
+    dataset = dataset.repeat(epochs)
     dataset = dataset.batch(global_batch_size)
+    dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
     return dataset
