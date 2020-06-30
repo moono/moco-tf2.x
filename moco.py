@@ -2,57 +2,82 @@ import argparse
 import tensorflow as tf
 
 from misc.utils import str_to_bool
-from misc.tf_utils import allow_memory_growth
+from misc.tf_utils import allow_memory_growth, split_gpu_for_testing
+from datasets.toy_dataset import get_dataset as get_toy_dataset
 from base_networks.load_model import load_model
 
 
-class MoCoTrainer(object):
-    def __init__(self, t_params, name):
-        assert t_params['base_encoder'] == 'resnet50'
+FULL_MOCO_PARAMS = {
+    # debugging
+    0: {
+        'base_encoder': 'linear',
+        'network_params': {'input_shape': [4], 'dim': 4, 'K': 16, 'm': 0.999, 'T': 0.07}
+    },
+    # MoCo v1
+    1: {
+        'base_encoder': 'resnet50',
+        'network_params': {'input_shape': [224, 224, 3], 'dim': 128, 'K': 65536, 'm': 0.999, 'T': 0.07, 'mlp': False},
+    },
+    # MoCo v2
+    2: {
+        'base_encoder': 'resnet50',
+        'network_params': {'input_shape': [224, 224, 3], 'dim': 128, 'K': 65536, 'm': 0.999, 'T': 0.2, 'mlp': True}
+    }
+}
+
+
+class MoCo(object):
+    def __init__(self, t_params):
+        assert t_params['base_encoder'] in ['resnet50', 'linear']
 
         # global parameters
-        self.name = name
+        self.name = t_params['name']
         self.use_tf_function = t_params['use_tf_function']
         self.model_base_dir = t_params['model_base_dir']
-        self.train_res = t_params['train_res']
+
+        # moco parameters
+        self.base_encoder = t_params['base_encoder']
+        self.network_params = t_params['network_params']
+        self.dim = t_params['network_params']['dim']
+        # self.res = t_params['res']
+        self.K = t_params['network_params']['K']
+        self.m = t_params['network_params']['m']
+        self.T = t_params['network_params']['T']
+        # self.mlp = t_params.get('mlp', False)
+
         self.batch_size = t_params['batch_size_per_replica']
         self.global_batch_size = t_params['global_batch_size']
         self.n_replicas = t_params['n_replicas']
 
-        # moco parameters
-        self.base_encoder = t_params['base_encoder']
-        self.dim = t_params['dim']
-        self.res = t_params['res']
-        self.K = t_params['K']
-        self.m = t_params['m']
-        self.T = t_params['T']
-        self.mlp = t_params['mlp']
-
         # create the encoders and clone(q -> k)
-        self.encoder_q = load_model('encoder_q', self.base_encoder, self.res, self.dim, self.mlp, trainable=True)
-        self.encoder_k = load_model('encoder_k', self.base_encoder, self.res, self.dim, self.mlp, trainable=False)
+        self.encoder_q = load_model('encoder_q', self.base_encoder, self.network_params, trainable=True)
+        self.encoder_k = load_model('encoder_k', self.base_encoder, self.network_params, trainable=False)
         for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
             kw.assign(qw)
 
-        # create the queue
+        # create queue
         self.queue, self.queue_ptr = self._setup_queue()
 
         # create optimizer
-        self.learning_rate = tf.Variable(t_params['opt']['initial_learning_rate'], trainable=False,
+        self.learning_rate = tf.Variable(t_params['initial_learning_rate'], trainable=False,
                                          synchronization=tf.VariableSynchronization.ON_READ,
                                          aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
         self.optimizer = tf.keras.optimizers.SGD(self.learning_rate, momentum=0.9, nesterov=True)
         return
 
     def _setup_queue(self):
+        # queue pointer
         queue_ptr_init = tf.zeros(shape=[], dtype=tf.int64)
+        queue_ptr = tf.Variable(queue_ptr_init, trainable=False,
+                                synchronization=tf.VariableSynchronization.ON_READ,
+                                aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
+
+        # actual queue
         queue_init = tf.math.l2_normalize(tf.random.normal([self.K, self.dim]), axis=1)
         queue = tf.Variable(queue_init, trainable=False,
                             synchronization=tf.VariableSynchronization.ON_READ,
                             aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
-        queue_ptr = tf.Variable(queue_ptr_init, trainable=False,
-                                synchronization=tf.VariableSynchronization.ON_READ,
-                                aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
+
         return queue, queue_ptr
 
     def _batch_shuffle(self, all_gathered, strategy):
@@ -128,9 +153,6 @@ class MoCoTrainer(object):
             q = self.encoder_q(im_q)  # queries: NxC
             q = tf.math.l2_normalize(q, axis=1)
 
-            # should momentum update here?
-            # ... not working?
-
             # compute logits: Einstein sum is more intuitive
             l_pos = tf.expand_dims(tf.einsum('nc,nc->n', q, k), axis=-1)  # positive logits: Nx1
             l_neg = tf.einsum('nc,kc->nk', q, self.queue)  # negative logits: NxK
@@ -167,7 +189,7 @@ class MoCoTrainer(object):
             shuffled_k, shuffled_idx = self._batch_shuffle(im_k, strategy)
 
             # run on encoder_k to collect shuffled keys
-            k_shuffled = dist_encode_key((shuffled_k, ))
+            k_shuffled = dist_encode_key((shuffled_k,))
 
             # unshuffle and merge all
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
@@ -176,7 +198,7 @@ class MoCoTrainer(object):
             losses = dist_train_step((im_q, k_unshuffled))
 
             # update key encoder
-            self.encoder_k.momentum_update(self.encoder_q)
+            self.encoder_k.momentum_update(self.encoder_q, self.m)
 
             # update queue
             self._dequeue_and_enqueue(k_unshuffled)
@@ -184,53 +206,31 @@ class MoCoTrainer(object):
         return
 
 
-def get_moco_params(args):
-    dim = 128
-    K = 65536
-    m = 0.999
-    if args['moco_version'] == 1:
-        moco_params = {
-            'base_encoder': args['base_encoder'],
-            'res': args['train_res'],
-            'dim': dim,
-            'K': K,
-            'm': m,
-            'T': 0.07,
-            'mlp': False,
-        }
-    else:
-        moco_params = {
-            'base_encoder': args['base_encoder'],
-            'res': args['train_res'],
-            'dim': dim,
-            'K': K,
-            'm': m,
-            'T': 0.2,
-            'mlp': True,
-        }
-    return moco_params
-
-
 def main():
     # global program arguments parser
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=True)
-    parser.add_argument('--use_tf_function', type=str_to_bool, nargs='?', const=True, default=True)
+    parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--debug_split_gpu', type=str_to_bool, nargs='?', const=True, default=True)
+    parser.add_argument('--use_tf_function', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--name', default='debugging', type=str)
     parser.add_argument('--model_base_dir', default='./models', type=str)
-    parser.add_argument('--images_dir', default='/mnt/vision-nas/junho/dataset/FFHQ', type=str)
-    parser.add_argument('--base_encoder', default='resnet50', type=str)
-    parser.add_argument('--train_res', default=224, type=int)
+    parser.add_argument('--dataset_name', default='toy', type=str)
+    parser.add_argument('--moco_version', default=0, type=int)
+    parser.add_argument('--base_encoder', default='linear', type=str)
     parser.add_argument('--batch_size_per_replica', default=8, type=int)
-    parser.add_argument('--moco_version', default=1, type=int)
+    parser.add_argument('--epochs', default=2, type=int)
+    parser.add_argument('--initial_learning_rate', default=0.001, type=float)
     args = vars(parser.parse_args())
 
+    # GPU environment settings
     if args['allow_memory_growth']:
         allow_memory_growth()
+    if args['debug_split_gpu']:
+        split_gpu_for_testing()
 
-    # get MoCo specific parameters
-    assert args['moco_version'] in [1, 2]
-    moco_params = get_moco_params(args)
-    name = 'MoCo_v1' if args['moco_version'] == 1 else 'MoCo_v2'
+    # get MoCo parameters
+    assert args['moco_version'] in [0, 1, 2]
+    moco_params = FULL_MOCO_PARAMS[args['moco_version']]
 
     # prepare distribute training
     strategy = tf.distribute.MirroredStrategy()
@@ -239,29 +239,37 @@ def main():
     # training parameters
     training_parameters = {
         # global params
+        'name': args['name'],
         'use_tf_function': args['use_tf_function'],
         'model_base_dir': args['model_base_dir'],
-        'train_res': args['train_res'],
 
-        # network params
+        # moco params
         **moco_params,
 
         # training params
-        'opt': {'initial_learning_rate': 0.002},
+        'epochs': args['epochs'],
+        'initial_learning_rate': args['initial_learning_rate'],
         'batch_size_per_replica': args['batch_size_per_replica'],
         'global_batch_size': global_batch_size,
         'n_replicas': strategy.num_replicas_in_sync,
-        'epochs': 200,
     }
 
-    with strategy.scope():
-        # create MoCo trainer
-        moco_trainer = MoCoTrainer(training_parameters, name=name)
+    # load dataset
+    if args['dataset_name']:
+        dataset = get_toy_dataset(global_batch_size)
+    else:
+        dataset = None
 
+    with strategy.scope():
+        # create MoCo instance
+        moco = MoCo(training_parameters)
+
+        # distribute dataset
         dist_dataset = strategy.experimental_distribute_dataset(dataset)
 
+        # start training
         print('Training...')
-        moco_trainer.train(dist_dataset, strategy)
+        moco.train(dist_dataset, strategy)
     return
 
 
