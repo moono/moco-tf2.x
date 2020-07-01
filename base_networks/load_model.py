@@ -8,6 +8,14 @@ def get_proper_module(module_name, object_name):
     return obj
 
 
+def set_weight_decay_on_layer(layer, weight_decay):
+    if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
+        layer.add_loss(lambda: tf.keras.regularizers.l2(weight_decay)(layer.kernel))
+    if hasattr(layer, 'bias_regularizer') and layer.use_bias:
+        layer.add_loss(lambda: tf.keras.regularizers.l2(weight_decay)(layer.bias))
+    return
+
+
 def load_model(name, network_name, network_params, trainable, weight_decay=None):
     class_name_table = {
         'resnet50': 'Resnet50',
@@ -23,10 +31,11 @@ def load_model(name, network_name, network_params, trainable, weight_decay=None)
     # set weight decay
     if weight_decay is not None:
         for layer in m.layers:
-            if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
-                layer.add_loss(lambda: tf.keras.regularizers.l2(weight_decay)(layer.kernel))
-            if hasattr(layer, 'bias_regularizer') and layer.use_bias:
-                layer.add_loss(lambda: tf.keras.regularizers.l2(weight_decay)(layer.bias))
+            if isinstance(layer, tf.keras.models.Model):
+                for real_layer in layer.layers:
+                    set_weight_decay_on_layer(real_layer, weight_decay)
+            else:
+                set_weight_decay_on_layer(layer, weight_decay)
 
     # set trainable or not
     if not trainable:
@@ -51,8 +60,8 @@ def main():
 
     resnet_params = {
         'input_shape': [224, 224, 3],
-        'last_dim': 512,
-        'with_projection_head': True,
+        'dim': 512,
+        'mlp': True,
     }
 
     resnet50_q = load_model(name='encoder_q', network_name='resnet50', network_params=resnet_params, trainable=True)

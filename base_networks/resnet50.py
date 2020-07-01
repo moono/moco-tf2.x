@@ -113,8 +113,8 @@ class Resnet50(models.Model):
         super(Resnet50, self).__init__(**kwargs)
         self.resnet50 = get_model(
             res=resnet_params['input_shape'][0],
-            classes=resnet_params['last_dim'],
-            with_projection_head=resnet_params['with_projection_head'])
+            classes=resnet_params['dim'],
+            with_projection_head=resnet_params['mlp'])
         return
 
     @tf.function
@@ -136,8 +136,8 @@ def test_compare():
     input_shape = [res, res, 3]
     resnet_params = {
         'input_shape': input_shape,
-        'last_dim': classes,
-        'with_projection_head': False,
+        'dim': classes,
+        'mlp': False,
     }
 
     # Total params: 25,636,712
@@ -161,8 +161,8 @@ def test_raw():
     classes = 512
     resnet_params = {
         'input_shape': [res, res, 3],
-        'last_dim': classes,
-        'with_projection_head': True,
+        'dim': classes,
+        'mlp': True,
     }
     resnet50 = Resnet50(resnet_params, name='encoder')
     _ = resnet50(tf.random.normal(shape=[1] + resnet_params['input_shape']))
@@ -172,6 +172,10 @@ def test_raw():
 
 
 def main():
+    from misc.tf_utils import allow_memory_growth
+
+    allow_memory_growth()
+
     test_compare()
     test_raw()
     return
