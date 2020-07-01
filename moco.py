@@ -1,38 +1,17 @@
 import os
 import time
-import argparse
 import numpy as np
 import tensorflow as tf
 
-from pprint import pprint as pp
-from misc.utils import str_to_bool
-from misc.tf_utils import allow_memory_growth, split_gpu_for_testing
-from datasets.toy_dataset import get_dataset as get_toy_dataset
 from base_networks.load_model import load_model
-
-
-ALL_MOCO_PARAMS = {
-    # debugging
-    0: {
-        'base_encoder': 'linear',
-        'network_params': {'input_shape': [1], 'dim': 4, 'K': 16, 'm': 0.999, 'T': 0.07}
-    },
-    # MoCo v1
-    1: {
-        'base_encoder': 'resnet50',
-        'network_params': {'input_shape': [224, 224, 3], 'dim': 128, 'K': 65536, 'm': 0.999, 'T': 0.07, 'mlp': False},
-    },
-    # MoCo v2
-    2: {
-        'base_encoder': 'resnet50',
-        'network_params': {'input_shape': [224, 224, 3], 'dim': 128, 'K': 65536, 'm': 0.999, 'T': 0.2, 'mlp': True}
-    }
-}
 
 
 def constant_learning_rate_decay(global_batch_size, n_images, initial_lr, decay, epoch_decay):
     assert isinstance(global_batch_size, int) and isinstance(n_images, int)
     assert isinstance(initial_lr, float) and isinstance(decay, float)
+    if epoch_decay is None:
+        return initial_lr
+
     assert isinstance(epoch_decay, list) and isinstance(all(epoch_decay), int)
 
     images_per_step = n_images / global_batch_size
@@ -292,88 +271,3 @@ class MoCo(object):
         step = self.optimizer.iterations.numpy()
         self.manager.save(checkpoint_number=step)
         return
-
-
-def main():
-    # global program arguments parser
-    parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=False)
-    parser.add_argument('--debug_split_gpu', type=str_to_bool, nargs='?', const=True, default=True)
-    parser.add_argument('--use_tf_function', type=str_to_bool, nargs='?', const=True, default=True)
-    parser.add_argument('--name', default='debugging', type=str)
-    parser.add_argument('--model_base_dir', default='./models', type=str)
-    parser.add_argument('--dataset_name', default='toy', type=str)
-    parser.add_argument('--dataset_n_images', default=1000000, type=int)
-    parser.add_argument('--moco_version', default=0, type=int)
-    parser.add_argument('--base_encoder', default='linear', type=str)
-    parser.add_argument('--batch_size_per_replica', default=32, type=int)
-    parser.add_argument('--epochs', default=200, type=int)
-    parser.add_argument('--initial_lr', default=0.003, type=float)
-    parser.add_argument('--lr_decay_factor', default=0.1, type=float)
-    parser.add_argument('--lr_decay_boundaries', nargs='*', type=int)   # takes list of ints
-    parser.add_argument('--weight_decay_factor', default=0.0001, type=float)
-    args = vars(parser.parse_args())
-
-    # default lr_decay_boundaries value
-    if args['lr_decay_boundaries'] is None:
-        args['lr_decay_boundaries'] = [120, 160]
-
-    # GPU environment settings
-    if args['allow_memory_growth']:
-        allow_memory_growth()
-    if args['debug_split_gpu']:
-        split_gpu_for_testing()
-
-    # get MoCo parameters
-    assert args['moco_version'] in [0, 1, 2]
-    moco_params = ALL_MOCO_PARAMS[args['moco_version']]
-
-    # prepare distribute training
-    strategy = tf.distribute.MirroredStrategy()
-    global_batch_size = args['batch_size_per_replica'] * strategy.num_replicas_in_sync
-
-    # training parameters
-    training_parameters = {
-        # global params
-        'name': args['name'],
-        'use_tf_function': args['use_tf_function'],
-        'model_base_dir': args['model_base_dir'],
-
-        # moco params
-        **moco_params,
-
-        # training params
-        'n_images': args['dataset_n_images'],
-        'epochs': args['epochs'],
-        'weight_decay': args['weight_decay_factor'],
-        'initial_lr': args['initial_lr'],
-        'lr_decay': args['lr_decay_factor'],
-        'lr_decay_boundaries': args['lr_decay_boundaries'],
-        'batch_size_per_replica': args['batch_size_per_replica'],
-        'global_batch_size': global_batch_size,
-    }
-
-    # print current details
-    pp(training_parameters)
-
-    # load dataset
-    if args['dataset_name']:
-        dataset = get_toy_dataset(global_batch_size, args['dataset_n_images'], args['epochs'])
-    else:
-        dataset = None
-
-    with strategy.scope():
-        # create MoCo instance
-        moco = MoCo(training_parameters)
-
-        # distribute dataset
-        dist_dataset = strategy.experimental_distribute_dataset(dataset)
-
-        # start training
-        print('Training...')
-        moco.train(dist_dataset, strategy)
-    return
-
-
-if __name__ == '__main__':
-    main()
