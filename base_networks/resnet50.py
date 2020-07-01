@@ -52,16 +52,9 @@ def stack_fn(x):
 
 
 def preprocess_inputs(image):
-    # image: rgb, 0.0 ~ 255.0
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    mean = mean[::-1]
-    std = std[::-1]
-    image_mean = tf.constant(mean, dtype=tf.float32) * 255.
-    image_std = tf.constant(std, dtype=tf.float32) * 255.
-
-    # convert to bgr
-    image = tf.reverse(image, axis=[-1])
+    # image: rgb, 0.0 ~ 1.0
+    image_mean = tf.constant([0.485, 0.456, 0.406], dtype=tf.float32)[None, None, None, :]
+    image_std = tf.constant([0.229, 0.224, 0.225], dtype=tf.float32)[None, None, None, :]
 
     # normalize
     image = (image - image_mean) / image_std
@@ -171,11 +164,25 @@ def test_raw():
     return
 
 
+def test_normalize():
+    image = tf.ones(shape=[1, 4, 4, 3])
+    normalized = preprocess_inputs(image)
+
+    tf.print(image[0, :, :, 0])
+    tf.print(image[0, :, :, 1])
+    tf.print(image[0, :, :, 2])
+    tf.print(normalized[0, 0, :, :])
+    tf.print(normalized[0, 1, :, :])
+    tf.print(normalized[0, 2, :, :])
+    return
+
+
 def main():
     from misc.tf_utils import allow_memory_growth
 
     allow_memory_growth()
 
+    test_normalize()
     test_compare()
     test_raw()
     return

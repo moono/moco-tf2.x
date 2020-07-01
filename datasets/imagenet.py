@@ -8,8 +8,19 @@ from datasets.simclr_data_augmentation import (
 )
 
 
+"""
+All augmentation's input & output spec
+input
+    image: [None, None, 3] (0 ~ 255) uint8
+    res: output resolution
+output
+    image: [res, res, 3] (0.0 ~ 1.0) float32
+"""
+
+
 def augmentation_eval(image, res):
-    # convert to (0.0 ~ 1.0) float32
+    # convert to (0.0 ~ 1.0) float32 first
+    # to fit SimCLR's image augmentation code
     image = tf.image.convert_image_dtype(image, dtype=tf.float32)
     image = center_crop(image, res, res, crop_proportion=CROP_PROPORTION)
     image = tf.reshape(image, [res, res, 3])
@@ -18,7 +29,8 @@ def augmentation_eval(image, res):
 
 
 def augmentation_v1(image, res):
-    # convert to (0.0 ~ 1.0) float32
+    # convert to (0.0 ~ 1.0) float32 first
+    # to fit SimCLR's image augmentation code
     image = tf.image.convert_image_dtype(image, dtype=tf.float32)
     image = random_crop_with_resize(image, res, res)
     image = random_apply(to_grayscale, p=0.2, x=image)
@@ -30,7 +42,8 @@ def augmentation_v1(image, res):
 
 
 def augmentation_v2(image, res):
-    # convert to (0.0 ~ 1.0) float32
+    # convert to (0.0 ~ 1.0) float32 first
+    # to fit SimCLR's image augmentation code
     image = tf.image.convert_image_dtype(image, dtype=tf.float32)
     image = random_crop_with_resize(image, res, res)
     image = random_color_jitter(image, color_jitter_strength=0.5)
@@ -92,8 +105,8 @@ def main():
     from PIL import Image
 
     res = 224
-    batch_size = 4
-    is_training = False
+    batch_size = 32
+    is_training = True
     moco_ver = 1
     epochs = 1
     tfds_data_dir = '/mnt/vision-nas/data-sets/tensorflow_datasets'
@@ -108,6 +121,8 @@ def main():
         return img
 
     for images_q, images_k in dataset.take(1):
+        # images_*: [batch_size, res, res, 3] (0.0 ~ 1.0) float32
+
         im_q = postprocess_image(images_q)
         im_q.show()
 
