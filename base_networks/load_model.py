@@ -8,11 +8,24 @@ def get_proper_module(module_name, object_name):
     return obj
 
 
-def set_weight_decay_on_layer(layer, weight_decay):
-    if isinstance(layer, tf.keras.layers.Conv2D) or isinstance(layer, tf.keras.layers.Dense):
-        layer.add_loss(lambda: tf.keras.regularizers.l2(weight_decay)(layer.kernel))
-    if hasattr(layer, 'bias_regularizer') and layer.use_bias:
-        layer.add_loss(lambda: tf.keras.regularizers.l2(weight_decay)(layer.bias))
+# https://stackoverflow.com/questions/41260042/global-weight-decay-in-keras
+def add_weight_decay(model, weight_decay):
+    if (weight_decay is None) or (weight_decay == 0.0):
+        return
+
+    # recursion inside the model
+    def add_decay_loss(m, factor):
+        if isinstance(m, tf.keras.Model):
+            for layer in m.layers:
+                add_decay_loss(layer, factor)
+        else:
+            for param in m.trainable_weights:
+                with tf.keras.backend.name_scope('weight_regularizer'):
+                    regularizer = lambda: tf.keras.regularizers.l2(factor)(param)
+                    m.add_loss(regularizer)
+
+    # weight decay and l2 regularization differs by a factor of 2
+    add_decay_loss(model, weight_decay/2.0)
     return
 
 
@@ -29,13 +42,7 @@ def load_model(name, network_name, network_params, trainable, weight_decay=None)
     _ = m(test_input_images)
 
     # set weight decay
-    if weight_decay is not None:
-        for layer in m.layers:
-            if isinstance(layer, tf.keras.models.Model):
-                for real_layer in layer.layers:
-                    set_weight_decay_on_layer(real_layer, weight_decay)
-            else:
-                set_weight_decay_on_layer(layer, weight_decay)
+    add_weight_decay(m, weight_decay)
 
     # set trainable or not
     if not trainable:
@@ -53,8 +60,8 @@ def main():
         'input_shape': [4],
         'dim': 4,
     }
-    linear_q = load_model('linear_q', network_name='linear', network_params=linear_params, trainable=True, weight_decay=0.001)
-    linear_k = load_model('linear_k', network_name='linear', network_params=linear_params, trainable=False, weight_decay=0.001)
+    linear_q = load_model('linear_q', network_name='linear', network_params=linear_params, trainable=True)
+    linear_k = load_model('linear_k', network_name='linear', network_params=linear_params, trainable=False)
     print(linear_q.summary())
     print(linear_k.summary())
 
@@ -64,8 +71,8 @@ def main():
         'mlp': True,
     }
 
-    resnet50_q = load_model(name='encoder_q', network_name='resnet50', network_params=resnet_params, trainable=True)
-    resnet50_k = load_model(name='encoder_k', network_name='resnet50', network_params=resnet_params, trainable=False)
+    resnet50_q = load_model(name='encoder_q', network_name='resnet50', network_params=resnet_params, trainable=True, weight_decay=0.001)
+    resnet50_k = load_model(name='encoder_k', network_name='resnet50', network_params=resnet_params, trainable=False, weight_decay=0.001)
     print(resnet50_q.summary())
     print(resnet50_k.summary())
     return
