@@ -33,11 +33,11 @@ def main():
     parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=False)
     parser.add_argument('--debug_split_gpu', type=str_to_bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_tf_function', type=str_to_bool, nargs='?', const=True, default=True)
-    parser.add_argument('--name', default='moco_v1_imagenet', type=str)
+    parser.add_argument('--name', default='test', type=str)
     parser.add_argument('--tfds_data_dir', default='/mnt/vision-nas/data-sets/tensorflow_datasets', type=str)
     parser.add_argument('--model_base_dir', default='./models', type=str)
     parser.add_argument('--moco_version', default=1, type=int)
-    parser.add_argument('--batch_size_per_replica', default=2, type=int)
+    parser.add_argument('--batch_size_per_replica', default=8, type=int)
     parser.add_argument('--epochs', default=200, type=int)
     args = vars(parser.parse_args())
 
@@ -59,6 +59,7 @@ def main():
 
     # get MoCo parameters
     moco_params = moco_parameter_by_version(args['moco_version'])
+    res = moco_params['network_params']['input_shape'][0]
 
     # prepare distribute training
     strategy = tf.distribute.MirroredStrategy()
@@ -75,7 +76,7 @@ def main():
         **moco_params,
 
         # training params
-        'n_images': dataset_n_images['train'],
+        'n_images': dataset_n_images['train'] * args['epochs'],
         'epochs': args['epochs'],
         'weight_decay': weight_decay_factor,
         'initial_lr': initial_lr,
@@ -90,7 +91,7 @@ def main():
 
     # load dataset
     dataset = get_imagenet_dataset(
-        args['tfds_data_dir'], is_training=True, res=224, moco_ver=args['moco_version'],
+        args['tfds_data_dir'], is_training=True, res=res, moco_ver=args['moco_version'],
         batch_size=global_batch_size, epochs=args['epochs'])
 
     with strategy.scope():

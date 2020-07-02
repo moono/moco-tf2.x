@@ -32,12 +32,15 @@ class MoCo(object):
         self.model_base_dir = t_params['model_base_dir']
         self.batch_size = t_params['batch_size_per_replica']
         self.global_batch_size = t_params['global_batch_size']
+        self.epochs = t_params['epochs']
         self.n_images = t_params['n_images']
         self.max_steps = int(np.ceil(self.n_images / self.global_batch_size))
+        self.epochs_per_step = self.global_batch_size / (self.n_images / self.epochs)
         self.reached_max_steps = False
         self.print_step = 50
         self.save_step = 200
         self.image_summary_step = 200
+        self.n_replica = self.global_batch_size // self.batch_size
 
         # moco parameters
         self.base_encoder = t_params['base_encoder']
@@ -98,24 +101,24 @@ class MoCo(object):
 
         return queue, queue_ptr
 
-    def _batch_shuffle(self, all_gathered, strategy):
-        # convert to tf.Tensor
-        data = tf.concat(strategy.experimental_local_results(all_gathered), axis=0)
+    def _batch_shuffle(self, im_k, strategy):
+        collected_im_k = tf.concat(strategy.experimental_local_results(im_k), axis=0)
+        global_batch_size = tf.shape(collected_im_k)[0]
 
         # create shuffled index for global batch size
-        all_idx = tf.range(self.global_batch_size)
-        shuffled_idx = tf.random.shuffle(all_idx)
+        indices = tf.range(global_batch_size)
+        shuffled_idx = tf.random.shuffle(indices)
 
         # shuffle
-        shuffled_data = tf.gather(data, indices=shuffled_idx)
+        shuffled_data = tf.gather(collected_im_k, indices=shuffled_idx)
         return shuffled_data, shuffled_idx
 
-    def _batch_unshuffle(self, all_shuffled, shuffled_idx, strategy):
-        all_shuffled = tf.concat(strategy.experimental_local_results(all_shuffled), axis=0)     # [GN, C]
-        shuffled_idx = tf.expand_dims(shuffled_idx, axis=1)                                     # [GN, 1]
-        output_shape = tf.shape(all_shuffled)                                                   # [GN, C]
-        unshuffled_data = tf.scatter_nd(indices=shuffled_idx, updates=all_shuffled, shape=output_shape)
-        return unshuffled_data
+    def _batch_unshuffle(self, k_shuffled, shuffled_idx, strategy):
+        collected_k_shuffled = tf.concat(strategy.experimental_local_results(k_shuffled), axis=0)
+        output_shape = tf.shape(collected_k_shuffled)           # [GN, C]
+        shuffled_idx = tf.expand_dims(shuffled_idx, axis=1)     # [GN, 1]
+        unshuffled_im_k = tf.scatter_nd(indices=shuffled_idx, updates=collected_k_shuffled, shape=output_shape)
+        return unshuffled_im_k
 
     def _dequeue_and_enqueue(self, keys):
         # keys: [GN, C]
@@ -131,20 +134,21 @@ class MoCo(object):
         return
 
     def forward_encoder_k(self, inputs):
-        all_im_k = inputs[0]
+        shuffled_im_k = inputs[0]
+        global_batch_size = tf.shape(shuffled_im_k)[0]  # GN
 
         # inputs are already shuffled, just take shuffled data respect to their index will suffice
-        all_idx = tf.range(self.global_batch_size)
+        all_idx = tf.range(global_batch_size)
         replica_id = tf.distribute.get_replica_context().replica_id_in_sync_group
         this_start = replica_id * self.batch_size
         this_end = this_start + self.batch_size
-        this_idx = all_idx[this_start:this_end]
+        this_idx = all_idx[this_start:this_end]     # [N, ]
 
         # get this replica's im_k
-        im_k = tf.gather(all_im_k, indices=this_idx)
+        im_k = tf.gather(shuffled_im_k, indices=this_idx)   # [N, res, res, 3]
 
         # compute query features
-        k = self.encoder_k(im_k)  # keys: NxC
+        k = self.encoder_k(im_k, training=False)  # keys: NxC
         k = tf.math.l2_normalize(k, axis=1)
         return k
 
@@ -161,7 +165,7 @@ class MoCo(object):
 
         with tf.GradientTape() as tape:
             # compute query features
-            q = self.encoder_q(im_q)  # queries: NxC
+            q = self.encoder_q(im_q, training=True)  # queries: NxC
             q = tf.math.l2_normalize(q, axis=1)
 
             # compute logits: Einstein sum is more intuitive
@@ -219,11 +223,7 @@ class MoCo(object):
         print(f'max_steps: {self.max_steps}')
         t_start = time.time()
         for im_q, im_k in dist_dataset:
-            # train step
-
             # shuffle data on global scale
-            # shuffled_im_k: [GN, ]
-            # shuffled_idx: [GN, ]
             shuffled_im_k, shuffled_idx = self._batch_shuffle(im_k, strategy)
 
             # run on encoder_k to collect shuffled keys
@@ -250,11 +250,15 @@ class MoCo(object):
             # save to tensorboard
             with train_summary_writer.as_default():
                 tf.summary.scalar('loss', metric_loss.result(), step=step)
+                tf.summary.histogram('queue_0', self.queue[0, :], step=step)
+                tf.summary.histogram('queue_-1', self.queue[-1, :], step=step)
 
             # print every self.print_steps
             if step % self.print_step == 0:
                 elapsed = time.time() - t_start
-                print('[step: {}] elapsed {:.2f}s, loss {:.3f}'.format(step, elapsed, loss.numpy()))
+                cur_epochs = self.epochs_per_step * step
+                print('[step: {}] elapsed {:.2f}s, loss {:.3f}, epochs {:.3f}'.format(
+                    step, elapsed, loss.numpy(), cur_epochs))
 
                 # reset timer
                 t_start = time.time()
