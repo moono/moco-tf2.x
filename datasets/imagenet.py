@@ -73,7 +73,7 @@ def get_dataset(tfds_data_dir, is_training, res, moco_ver, batch_size, epochs=No
     builder = tfds.builder(dataset_name, data_dir=tfds_data_dir)
     builder.download_and_prepare(download_config=dl_config)
     info = builder.info
-    print(info.features)
+    # print(info.features)
 
     # instantiate tf.data.Dataset
     if is_training and moco_ver == 1:
