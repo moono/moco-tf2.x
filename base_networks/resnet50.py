@@ -125,7 +125,7 @@ from tensorflow.keras.regularizers import l2
 
 class Block1(models.Model):
     def __init__(self, filters, kernel_size, stride, conv_shortcut, w_decay, name, **kwargs):
-        super(Block1, self).__init__(**kwargs)
+        super(Block1, self).__init__(name=name, **kwargs)
         data_format = 'channels_first'
         bn_axis = 1
         reg = l2(w_decay)
@@ -180,7 +180,7 @@ class Block1(models.Model):
 
 class Stack1(models.Model):
     def __init__(self, filters, n_blocks, stride, w_decay, name, **kwargs):
-        super(Stack1, self).__init__(**kwargs)
+        super(Stack1, self).__init__(name=name, **kwargs)
 
         self.block_1 = Block1(filters, 3, stride, conv_shortcut=True, w_decay=w_decay, name=f'{name}_block1')
         self.blocks = list()
@@ -239,9 +239,13 @@ class Resnet50(models.Model):
     @tf.function
     def momentum_update(self, src_net, m):
         for qw, kw in zip(src_net.weights, self.weights):
-            assert qw.shape == kw.shape
+            # print(f'{qw.name}: {kw.name}')
+            # assert qw.shape == kw.shape
+            # assert qw.name == kw.name
             updated_w = kw * m + qw * (1.0 - m)
             kw.assign(updated_w)
+
+            # tf.debugging.assert_near(updated_w, kw)
         return
 
     def _preprocess_inputs(self, image):

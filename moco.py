@@ -6,6 +6,27 @@ import tensorflow as tf
 from base_networks.load_model import load_model
 
 
+class CosineDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
+    def __init__(self, initial_lr, max_step_size, name=None):
+        super(CosineDecay, self).__init__()
+        self.initial_learning_rate = initial_lr
+        self.max_step_size = max_step_size
+        self.name = name
+
+    def __call__(self, step):
+        initial_lr = tf.convert_to_tensor(self.initial_learning_rate)
+        pi = tf.convert_to_tensor(np.pi)
+        global_step_recomp = tf.cast(step, initial_lr.dtype)
+        return initial_lr * 0.5 * (1.0 + tf.cos(global_step_recomp / self.max_step_size * pi))
+
+    def get_config(self):
+        return {
+            'initial_learning_rate': self.initial_learning_rate,
+            'max_step_size': self.max_step_size,
+            'name': self.name,
+        }
+
+
 def constant_learning_rate_decay(global_batch_size, n_images, initial_lr, decay, epoch_decay):
     assert isinstance(global_batch_size, int) and isinstance(n_images, int)
     assert isinstance(initial_lr, float) and isinstance(decay, float)
@@ -24,10 +45,9 @@ def constant_learning_rate_decay(global_batch_size, n_images, initial_lr, decay,
 
 class MoCo(object):
     def __init__(self, t_params):
-        assert t_params['base_encoder'] in ['resnet50', 'linear']
-
         # global parameters
         self.name = t_params['name']
+        self.moco_version = t_params['moco_version']
         self.use_tf_function = t_params['use_tf_function']
         self.model_base_dir = t_params['model_base_dir']
         self.batch_size = t_params['batch_size_per_replica']
@@ -59,12 +79,15 @@ class MoCo(object):
         self.queue, self.queue_ptr = self._setup_queue()
 
         # create optimizer
-        self.lr_schedule = constant_learning_rate_decay(self.global_batch_size,
-                                                        t_params['n_images'],
-                                                        t_params['initial_lr'],
-                                                        t_params['lr_decay'],
-                                                        t_params['lr_decay_boundaries'])
-        self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule, momentum=0.9, nesterov=True)
+        if self.moco_version == 1:
+            self.lr_schedule_fn = constant_learning_rate_decay(self.global_batch_size,
+                                                               t_params['n_images'],
+                                                               t_params['learning_rate']['initial_lr'],
+                                                               t_params['learning_rate']['lr_decay'],
+                                                               t_params['learning_rate']['lr_decay_boundaries'])
+        else:
+            self.lr_schedule_fn = CosineDecay(t_params['learning_rate']['initial_lr'], self.max_steps)
+        self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=True)
 
         # setup saving locations (object based savings)
         self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
@@ -260,9 +283,11 @@ class MoCo(object):
 
             # get current step
             step = self.optimizer.iterations.numpy()
+            c_lr = self.optimizer.learning_rate(self.optimizer.iterations)
 
             # save to tensorboard
             with train_summary_writer.as_default():
+                tf.summary.scalar('accuracy', metric_accuracy.result(), step=step)
                 tf.summary.scalar('loss', metric_loss.result(), step=step)
                 tf.summary.histogram('queue_0', self.queue[0, :], step=step)
                 tf.summary.histogram('queue_-1', self.queue[-1, :], step=step)
@@ -270,9 +295,9 @@ class MoCo(object):
             # print every self.print_steps
             if step % self.print_step == 0:
                 elapsed = time.time() - t_start
-                cur_epochs = self.epochs_per_step * step
-                logs = '[step/epoch: {}/{:.3f} in {:.2f}s]: loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}, acc {:.3f}'
-                print(logs.format(step, cur_epochs, elapsed, mean_loss.numpy(), mean_c_loss.numpy(),
+                c_epoch = self.epochs_per_step * step
+                logs = '[step/epoch/lr: {}/{:.3f}/{:.3f} in {:.2f}s]: loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}, acc {:.3f}'
+                print(logs.format(step, c_epoch, c_lr.numpy(), elapsed, mean_loss.numpy(), mean_c_loss.numpy(),
                                   mean_l2_reg.numpy(), mean_accuracy.numpy()))
 
                 # reset timer
