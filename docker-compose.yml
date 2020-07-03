@@ -1,7 +1,7 @@
 version: '2.3'
 services:
   training:
-    image: 172.20.40.190:5000/tf-2.0.0-gpu-py3
+    image: 172.20.40.190:5000/tf-2.0.0-gpu-py3:tfds
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=6,7
@@ -24,7 +24,7 @@ services:
               "--epochs", "200",
     ]
   watching:
-    image: 172.20.40.190:5000/tf-2.0.0-gpu-py3
+    image: 172.20.40.190:5000/tf-2.0.0-gpu-py3:tfds
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=7
