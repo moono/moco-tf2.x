@@ -8,6 +8,7 @@ use_bias = True
 """
 import tensorflow as tf
 from tensorflow.keras import layers, models
+from tensorflow.keras.regularizers import l2
 
 
 # def block1(x, filters, kernel_size=3, stride=1, conv_shortcut=True, name=None):
@@ -123,25 +124,30 @@ from tensorflow.keras import layers, models
 
 
 class Block1(models.Model):
-    def __init__(self, filters, kernel_size, stride, conv_shortcut, name, **kwargs):
+    def __init__(self, filters, kernel_size, stride, conv_shortcut, w_decay, name, **kwargs):
         super(Block1, self).__init__(**kwargs)
         data_format = 'channels_first'
         bn_axis = 1
+        reg = l2(w_decay)
         self.conv_shortcut = conv_shortcut
 
         if self.conv_shortcut:
-            self.conv_0 = layers.Conv2D(4 * filters, 1, strides=stride, name=name + '_0_conv', data_format=data_format)
+            self.conv_0 = layers.Conv2D(4 * filters, 1, strides=stride, name=name + '_0_conv',
+                                        data_format=data_format, kernel_regularizer=reg, bias_regularizer=reg)
             self.bn_0 = layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name=name + '_0_bn')
 
-        self.conv_1 = layers.Conv2D(filters, 1, strides=stride, name=name + '_1_conv', data_format=data_format)
+        self.conv_1 = layers.Conv2D(filters, 1, strides=stride, name=name + '_1_conv',
+                                    data_format=data_format, kernel_regularizer=reg, bias_regularizer=reg)
         self.bn_1 = layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name=name + '_1_bn')
         self.relu_1 = layers.Activation('relu', name=name + '_1_relu')
 
-        self.conv_2 = layers.Conv2D(filters, kernel_size, padding='SAME', name=name + '_2_conv', data_format=data_format)
+        self.conv_2 = layers.Conv2D(filters, kernel_size, padding='SAME', name=name + '_2_conv',
+                                    data_format=data_format, kernel_regularizer=reg, bias_regularizer=reg)
         self.bn_2 = layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name=name + '_2_bn')
         self.relu_2 = layers.Activation('relu', name=name + '_2_relu')
 
-        self.conv_3 = layers.Conv2D(4 * filters, 1, name=name + '_3_conv', data_format=data_format)
+        self.conv_3 = layers.Conv2D(4 * filters, 1, name=name + '_3_conv',
+                                    data_format=data_format, kernel_regularizer=reg, bias_regularizer=reg)
         self.bn_3 = layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name=name + '_3_bn')
 
         self.relu_out = layers.Activation('relu', name=name + '_out')
@@ -173,13 +179,13 @@ class Block1(models.Model):
 
 
 class Stack1(models.Model):
-    def __init__(self, filters, n_blocks, stride, name, **kwargs):
+    def __init__(self, filters, n_blocks, stride, w_decay, name, **kwargs):
         super(Stack1, self).__init__(**kwargs)
 
-        self.block_1 = Block1(filters, kernel_size=3, stride=stride, conv_shortcut=True, name=f'{name}_block1')
+        self.block_1 = Block1(filters, 3, stride, conv_shortcut=True, w_decay=w_decay, name=f'{name}_block1')
         self.blocks = list()
         for i in range(2, n_blocks + 1):
-            self.blocks.append(Block1(filters, kernel_size=3, stride=1, conv_shortcut=False, name=f'{name}_block{i}'))
+            self.blocks.append(Block1(filters, 3, 1, conv_shortcut=False,  w_decay=w_decay, name=f'{name}_block{i}'))
 
     def call(self, inputs, training=None, mask=None):
         x = inputs
@@ -194,8 +200,10 @@ class Stack1(models.Model):
 class Resnet50(models.Model):
     def __init__(self, resnet_params, **kwargs):
         super(Resnet50, self).__init__(**kwargs)
+        w_decay = resnet_params['w_decay']
         data_format = 'channels_first'
         bn_axis = 1
+        reg = l2(w_decay)
 
         self.res = resnet_params['input_shape'][0]
         self.classes = resnet_params['dim']
@@ -205,24 +213,27 @@ class Resnet50(models.Model):
         self.preprocess = layers.Lambda(lambda x: self._preprocess_inputs(x))
 
         self.conv1_pad = layers.ZeroPadding2D(padding=((3, 3), (3, 3)), name='conv1_pad', data_format=data_format)
-        self.conv1_conv = layers.Conv2D(64, 7, strides=2, use_bias=True, name='conv1_conv', data_format=data_format)
+        self.conv1_conv = layers.Conv2D(64, 7, strides=2, use_bias=True, name='conv1_conv',
+                                        data_format=data_format, kernel_regularizer=reg, bias_regularizer=reg)
         self.conv1_bn = layers.BatchNormalization(axis=bn_axis, epsilon=1.001e-5, name='conv1_bn')
         self.conv1_relu = layers.Activation('relu', name='conv1_relu')
         self.pool1_pad = layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name='pool1_pad', data_format=data_format)
         self.pool1_pool = layers.MaxPooling2D(3, strides=2, name='pool1_pool', data_format=data_format)
 
-        self.stack_1 = Stack1(64, 3, stride=1, name='conv2')
-        self.stack_2 = Stack1(128, 4, stride=2, name='conv3')
-        self.stack_3 = Stack1(256, 6, stride=2, name='conv4')
-        self.stack_4 = Stack1(512, 3, stride=2, name='conv5')
+        self.stack_1 = Stack1(64, 3, stride=1, w_decay=w_decay, name='conv2')
+        self.stack_2 = Stack1(128, 4, stride=2, w_decay=w_decay, name='conv3')
+        self.stack_3 = Stack1(256, 6, stride=2, w_decay=w_decay, name='conv4')
+        self.stack_4 = Stack1(512, 3, stride=2, w_decay=w_decay, name='conv5')
 
         self.avg_pool = layers.GlobalAveragePooling2D(name='avg_pool', data_format=data_format)
 
         if self.with_projection_head:
-            self.mlp = layers.Dense(2048, activation='relu')    # [N, 2048]
+            self.mlp = layers.Dense(2048, activation='relu',
+                                    kernel_regularizer=reg, bias_regularizer=reg, name='mlp')
 
         # [N, classes]
-        self.last_dense = layers.Dense(self.classes, activation='softmax', name='probs')
+        self.last_dense = layers.Dense(self.classes, activation='softmax',
+                                       kernel_regularizer=reg, bias_regularizer=reg, name='probs')
         return
 
     @tf.function
@@ -279,6 +290,7 @@ def test_compare():
         'input_shape': input_shape,
         'dim': classes,
         'mlp': False,
+        'w_decay': 0.0001,
     }
 
     # Total params: 25,636,712
@@ -291,9 +303,8 @@ def test_compare():
     # Trainable params: 25,583,592
     # Non-trainable params: 53,120
     resnet50 = Resnet50(resnet_params)
-    _ = resnet50(tf.random.normal(shape=[1] + resnet_params['input_shape']))
+    resnet50.build((None, *resnet_params['input_shape']))
     resnet50.summary()
-    print(_.shape)
     return
 
 
@@ -304,25 +315,13 @@ def test_raw():
         'input_shape': [res, res, 3],
         'dim': classes,
         'mlp': True,
+        'w_decay': 0.0001,
+        # 'w_decay': 0.0,
     }
     resnet50 = Resnet50(resnet_params, name='encoder')
-    _ = resnet50(tf.random.normal(shape=[1] + resnet_params['input_shape']))
+    resnet50.build((None, *resnet_params['input_shape']))
     resnet50.summary()
-    print(_.shape)
     return
-
-
-# def test_normalize():
-#     image = tf.ones(shape=[1, 4, 4, 3])
-#     normalized = preprocess_inputs(image)
-#
-#     tf.print(image[0, :, :, 0])
-#     tf.print(image[0, :, :, 1])
-#     tf.print(image[0, :, :, 2])
-#     tf.print(normalized[0, 0, :, :])
-#     tf.print(normalized[0, 1, :, :])
-#     tf.print(normalized[0, 2, :, :])
-#     return
 
 
 def main():
@@ -330,9 +329,8 @@ def main():
 
     allow_memory_growth()
 
-    # test_normalize()
     test_compare()
-    # test_raw()
+    test_raw()
     return
 
 

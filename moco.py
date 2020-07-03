@@ -50,8 +50,8 @@ class MoCo(object):
         self.T = t_params['network_params']['T']
 
         # create the encoders and clone(q -> k)
-        self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True, weight_decay=t_params['weight_decay'])
-        self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=False, weight_decay=t_params['weight_decay'])
+        self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True)
+        self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=False)
         for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
             kw.assign(qw)
 
@@ -182,19 +182,24 @@ class MoCo(object):
 
             # labels: positive key indicators
             labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
-            loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)  # [N, ]
+            c_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)  # [N, ]
+
+            # compute accuracy
+            accuracy = tf.cast(tf.equal(tf.math.argmax(logits, axis=1), labels), tf.float32)
 
             # weight regularization loss
-            l2_w_reg = tf.add_n(self.encoder_q.losses)
+            # l2_w_reg = tf.add_n(self.encoder_q.losses)
+            l2_w_reg = tf.reduce_sum(self.encoder_q.losses)
 
-            # scale losses
-            loss = tf.reduce_sum(loss) * (1.0 / self.global_batch_size)
-            loss += l2_w_reg
+            # scale to global batch scale
+            accuracy = tf.reduce_sum(accuracy) * (1.0 / self.global_batch_size)
+            c_loss = tf.reduce_sum(c_loss) * (1.0 / self.global_batch_size)
+            loss = c_loss + l2_w_reg
 
         t_var = self.encoder_q.trainable_variables
         gradients = tape.gradient(loss, t_var)
         self.optimizer.apply_gradients(zip(gradients, t_var))
-        return loss
+        return loss, c_loss, l2_w_reg, accuracy
 
     def train(self, dist_dataset, strategy):
         def dist_encode_key(inputs):
@@ -203,8 +208,11 @@ class MoCo(object):
 
         def dist_train_step(inputs):
             per_replica_losses = strategy.experimental_run_v2(fn=self.train_step, args=(inputs,))
-            mean_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None)
-            return mean_loss
+            mean_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses[0], axis=None)
+            mean_c_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses[1], axis=None)
+            mean_l2_reg = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses[2], axis=None)
+            mean_accuracy = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses[3], axis=None)
+            return mean_loss, mean_c_loss, mean_l2_reg, mean_accuracy
 
         if self.use_tf_function:
             dist_encode_key = tf.function(dist_encode_key)
@@ -218,6 +226,9 @@ class MoCo(object):
 
         # loss metrics
         metric_loss = tf.keras.metrics.Mean('loss', dtype=tf.float32)
+        metric_c_loss = tf.keras.metrics.Mean('contrastive_loss', dtype=tf.float32)
+        metric_l2_reg = tf.keras.metrics.Mean('l2_weight_regularization', dtype=tf.float32)
+        metric_accuracy = tf.keras.metrics.Mean('accuracy', dtype=tf.float32)
 
         # start actual training
         print(f'max_steps: {self.max_steps}')
@@ -233,7 +244,7 @@ class MoCo(object):
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
 
             # train step: update queue encoder
-            loss = dist_train_step((im_q, k_unshuffled))
+            mean_loss, mean_c_loss, mean_l2_reg, mean_accuracy = dist_train_step((im_q, k_unshuffled))
 
             # update key encoder
             self.encoder_k.momentum_update(self.encoder_q, self.m)
@@ -242,7 +253,10 @@ class MoCo(object):
             self._dequeue_and_enqueue(k_unshuffled)
 
             # update metrics
-            metric_loss(loss)
+            metric_loss(mean_loss)
+            metric_c_loss(mean_c_loss)
+            metric_l2_reg(mean_l2_reg)
+            metric_accuracy(mean_accuracy)
 
             # get current step
             step = self.optimizer.iterations.numpy()
@@ -257,8 +271,9 @@ class MoCo(object):
             if step % self.print_step == 0:
                 elapsed = time.time() - t_start
                 cur_epochs = self.epochs_per_step * step
-                print('[step: {}] elapsed {:.2f}s, loss {:.3f}, epochs {:.3f}'.format(
-                    step, elapsed, loss.numpy(), cur_epochs))
+                logs = '[step/epoch: {}/{:.3f} in {:.2f}s]: loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}, acc {:.3f}'
+                print(logs.format(step, cur_epochs, elapsed, mean_loss.numpy(), mean_c_loss.numpy(),
+                                  mean_l2_reg.numpy(), mean_accuracy.numpy()))
 
                 # reset timer
                 t_start = time.time()

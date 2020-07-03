@@ -9,19 +9,19 @@ from datasets.imagenet import get_dataset as get_imagenet_dataset
 from moco import MoCo
 
 
-def moco_parameter_by_version(version):
+def moco_parameter_by_version(version, w_decay):
     if version == 1:
         moco_params = {
             'base_encoder': 'resnet50',
             'network_params': {
-                'input_shape': [224, 224, 3], 'dim': 128, 'K': 65536, 'm': 0.999, 'T': 0.07, 'mlp': False
+                'input_shape': [224, 224, 3], 'dim': 128, 'K': 65536, 'm': 0.999, 'T': 0.07, 'mlp': False, 'w_decay': w_decay,
             },
         }
     else:
         moco_params = {
             'base_encoder': 'resnet50',
             'network_params': {
-                'input_shape': [224, 224, 3], 'dim': 128, 'K': 65536, 'm': 0.999, 'T': 0.2, 'mlp': True
+                'input_shape': [224, 224, 3], 'dim': 128, 'K': 65536, 'm': 0.999, 'T': 0.2, 'mlp': True, 'w_decay': w_decay,
             },
         }
     return moco_params
@@ -33,7 +33,7 @@ def main():
     parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=False)
     parser.add_argument('--debug_split_gpu', type=str_to_bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_tf_function', type=str_to_bool, nargs='?', const=True, default=True)
-    parser.add_argument('--name', default='test', type=str)
+    parser.add_argument('--name', default='test2', type=str)
     parser.add_argument('--tfds_data_dir', default='/mnt/vision-nas/data-sets/tensorflow_datasets', type=str)
     parser.add_argument('--model_base_dir', default='./models', type=str)
     parser.add_argument('--moco_version', default=1, type=int)
@@ -55,10 +55,10 @@ def main():
     initial_lr = 0.003
     lr_decay_factor = 0.1
     lr_decay_boundaries = [120, 160]
-    weight_decay_factor = 0.0001
+    w_decay = 0.0001
 
     # get MoCo parameters
-    moco_params = moco_parameter_by_version(args['moco_version'])
+    moco_params = moco_parameter_by_version(args['moco_version'], w_decay=w_decay)
     res = moco_params['network_params']['input_shape'][0]
 
     # prepare distribute training
@@ -78,7 +78,6 @@ def main():
         # training params
         'n_images': dataset_n_images['train'] * args['epochs'],
         'epochs': args['epochs'],
-        'weight_decay': weight_decay_factor,
         'initial_lr': initial_lr,
         'lr_decay': lr_decay_factor,
         'lr_decay_boundaries': lr_decay_boundaries,
