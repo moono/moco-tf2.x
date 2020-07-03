@@ -187,6 +187,8 @@ class MoCo(object):
         k = tf.gather(all_k, indices=this_idx)
 
         with tf.GradientTape() as tape:
+            tape.watch([im_q, k, self.queue])
+
             # compute query features
             q = self.encoder_q(im_q, training=True)  # queries: NxC
             q = tf.math.l2_normalize(q, axis=1)
