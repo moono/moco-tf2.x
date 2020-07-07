@@ -4,9 +4,9 @@ services:
     image: 172.20.40.190:5000/tf-2.0.0-gpu-py3:tfds
     runtime: nvidia
     environment:
-      - NVIDIA_VISIBLE_DEVICES=6,7
+      - NVIDIA_VISIBLE_DEVICES=0,1,2,3
     user: "2004:2004"
-    container_name: "moono_gpu_67"
+    container_name: "moono_gpu_0123"
     volumes:
       - "/mnt/vision-nas/moono/git-repos/moco-tf2.x:/work-dir"
       - "/mnt/vision-nas/moono/trained_models/moco-tf-2.x:/model-dir"
@@ -16,20 +16,20 @@ services:
               "--allow_memory_growth", "false",
               "--debug_split_gpu", "false",
               "--use_tf_function", "true",
-              "--name", "initial-try",
+              "--name", "second-try",
               "--model_base_dir", "/model-dir",
               "--tfds_data_dir", "/tfds-dir",
               "--moco_version", "2",
-              "--batch_size_per_replica", "32",
+              "--batch_size_per_replica", "256",
               "--epochs", "200",
     ]
   watching:
     image: 172.20.40.190:5000/tf-2.0.0-gpu-py3:tfds
     runtime: nvidia
     environment:
-      - NVIDIA_VISIBLE_DEVICES=7
+      - NVIDIA_VISIBLE_DEVICES=3
     user: "2004:2004"
-    container_name: "moono_tensorboard_7"
+    container_name: "moono_tensorboard_3"
     depends_on:
       - training
     volumes:
