@@ -129,6 +129,7 @@ class MoCo(object):
 
         return queue, queue_ptr
 
+    @tf.function
     def _batch_shuffle(self, im_k, strategy):
         collected_im_k = tf.concat(strategy.experimental_local_results(im_k), axis=0)
         global_batch_size = tf.shape(collected_im_k)[0]
@@ -141,6 +142,7 @@ class MoCo(object):
         shuffled_data = tf.gather(collected_im_k, indices=shuffled_idx)
         return shuffled_data, shuffled_idx
 
+    @tf.function
     def _batch_unshuffle(self, k_shuffled, shuffled_idx, strategy):
         collected_k_shuffled = tf.concat(strategy.experimental_local_results(k_shuffled), axis=0)
         output_shape = tf.shape(collected_k_shuffled)           # [GN, C]
@@ -148,6 +150,7 @@ class MoCo(object):
         unshuffled_im_k = tf.scatter_nd(indices=shuffled_idx, updates=collected_k_shuffled, shape=output_shape)
         return unshuffled_im_k
 
+    @tf.function
     def _dequeue_and_enqueue(self, keys):
         # keys: [GN, C]
         end_queue_ptr = self.queue_ptr + self.global_batch_size
