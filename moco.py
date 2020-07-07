@@ -57,9 +57,8 @@ class MoCo(object):
         self.max_steps = int(np.ceil(self.n_images / self.global_batch_size))
         self.epochs_per_step = self.global_batch_size / (self.n_images / self.epochs)
         self.reached_max_steps = False
-        self.print_step = 50
-        self.save_step = 200
-        self.image_summary_step = 200
+        self.print_step = 100
+        self.save_step = 500
         self.n_replica = self.global_batch_size // self.batch_size
 
         # moco parameters
@@ -73,6 +72,8 @@ class MoCo(object):
         self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True)
         self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=False)
         for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
+            assert qw.shape == kw.shape
+            assert qw.name == kw.name
             kw.assign(qw)
 
         # create queue
@@ -91,7 +92,11 @@ class MoCo(object):
 
         # setup saving locations (object based savings)
         self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
-        self.ckpt = tf.train.Checkpoint(optimizer=self.optimizer, encoder_q=self.encoder_q, encoder_k=self.encoder_k)
+        self.ckpt = tf.train.Checkpoint(optimizer=self.optimizer,
+                                        encoder_q=self.encoder_q,
+                                        encoder_k=self.encoder_k,
+                                        queue_ptr=self.queue_ptr,
+                                        queue=self.queue)
         self.manager = tf.train.CheckpointManager(self.ckpt, self.ckpt_dir, max_to_keep=2)
 
         # try to restore
@@ -149,10 +154,14 @@ class MoCo(object):
         indices = tf.range(self.queue_ptr, end_queue_ptr, dtype=tf.int64)   # [GN,  ]
         indices = tf.expand_dims(indices, axis=1)                           # [GN, 1]
 
+        # update to new values
         updated_queue = tf.tensor_scatter_nd_update(tensor=self.queue, indices=indices, updates=keys)
         updated_queue_ptr = end_queue_ptr % self.K
 
+        # update queue
         self.queue.assign(updated_queue)
+
+        # update pointer
         self.queue_ptr.assign(updated_queue_ptr)
         return
 
@@ -186,8 +195,9 @@ class MoCo(object):
         this_idx = all_idx[this_start:this_end]
         k = tf.gather(all_k, indices=this_idx)
 
+        t_var = self.encoder_q.trainable_variables
         with tf.GradientTape() as tape:
-            tape.watch([im_q, k, self.queue])
+            tape.watch([im_q, k, self.queue, t_var])
 
             # compute query features
             q = self.encoder_q(im_q, training=True)  # queries: NxC
@@ -213,7 +223,6 @@ class MoCo(object):
             accuracy = tf.cast(tf.equal(tf.math.argmax(logits, axis=1), labels), tf.float32)
 
             # weight regularization loss
-            # l2_w_reg = tf.add_n(self.encoder_q.losses)
             l2_w_reg = tf.reduce_sum(self.encoder_q.losses)
 
             # scale to global batch scale
@@ -221,7 +230,6 @@ class MoCo(object):
             c_loss = tf.reduce_sum(c_loss) * (1.0 / self.global_batch_size)
             loss = c_loss + l2_w_reg
 
-        t_var = self.encoder_q.trainable_variables
         gradients = tape.gradient(loss, t_var)
         self.optimizer.apply_gradients(zip(gradients, t_var))
         return loss, c_loss, l2_w_reg, accuracy
@@ -249,12 +257,6 @@ class MoCo(object):
         # setup tensorboards
         train_summary_writer = tf.summary.create_file_writer(self.ckpt_dir)
 
-        # loss metrics
-        metric_loss = tf.keras.metrics.Mean('loss', dtype=tf.float32)
-        metric_c_loss = tf.keras.metrics.Mean('contrastive_loss', dtype=tf.float32)
-        metric_l2_reg = tf.keras.metrics.Mean('l2_weight_regularization', dtype=tf.float32)
-        metric_accuracy = tf.keras.metrics.Mean('accuracy', dtype=tf.float32)
-
         # start actual training
         print(f'max_steps: {self.max_steps}')
         t_start = time.time()
@@ -277,20 +279,16 @@ class MoCo(object):
             # update queue
             self._dequeue_and_enqueue(k_unshuffled)
 
-            # update metrics
-            metric_loss(mean_loss)
-            metric_c_loss(mean_c_loss)
-            metric_l2_reg(mean_l2_reg)
-            metric_accuracy(mean_accuracy)
-
             # get current step
             step = self.optimizer.iterations.numpy()
             c_lr = self.optimizer.learning_rate(self.optimizer.iterations)
 
             # save to tensorboard
             with train_summary_writer.as_default():
-                tf.summary.scalar('accuracy', metric_accuracy.result(), step=step)
-                tf.summary.scalar('loss', metric_loss.result(), step=step)
+                tf.summary.scalar('accuracy', mean_accuracy, step=step)
+                tf.summary.scalar('infoNCE', mean_c_loss, step=step)
+                tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
+                tf.summary.scalar('total_loss', mean_loss, step=step)
                 tf.summary.histogram('queue_0', self.queue[0, :], step=step)
                 tf.summary.histogram('queue_-1', self.queue[-1, :], step=step)
 

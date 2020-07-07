@@ -280,7 +280,7 @@ class Resnet50(models.Model):
         x = self.avg_pool(x)    # [N, 2048]
         if self.with_projection_head:
             x = self.mlp(x)     # [N, 2048]
-        x = self.last_dense(x)
+        x = self.last_dense(x)  # [N, 128]
         return x
 
 
