@@ -183,7 +183,7 @@ class MoCo(object):
         im_k = tf.gather(shuffled_im_k, indices=this_idx)   # [N, res, res, 3]
 
         # compute query features
-        k = self.encoder_k(im_k, training=False)  # keys: NxC
+        k = self.encoder_k(im_k, training=True)  # keys: NxC
         k = tf.math.l2_normalize(k, axis=1)
         return k
 

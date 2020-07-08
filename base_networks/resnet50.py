@@ -13,7 +13,8 @@ from tensorflow.keras.regularizers import l2
 
 DATA_FORMAT = 'channels_first'
 BN_AXIS = 1
-BN_EPS = 1.001e-5
+BN_MOMENTUM = 0.9
+BN_EPS = 1e-5
 CONV_KERNEL_INIT = tf.keras.initializers.VarianceScaling(scale=2.0, mode='fan_out', distribution='untruncated_normal')
 FC_KERNEL_INIT = tf.keras.initializers.RandomNormal(stddev=0.01)
 
@@ -27,21 +28,21 @@ class Block1(models.Model):
         if self.conv_shortcut:
             self.conv_0 = layers.Conv2D(4 * filters, 1, strides=stride, name=name + '_0_conv', data_format=DATA_FORMAT,
                                         use_bias=False, kernel_initializer=CONV_KERNEL_INIT, kernel_regularizer=reg)
-            self.bn_0 = layers.BatchNormalization(axis=BN_AXIS, epsilon=BN_EPS, name=name + '_0_bn')
+            self.bn_0 = layers.BatchNormalization(axis=BN_AXIS, momentum=BN_MOMENTUM, epsilon=BN_EPS, name=name + '_0_bn')
 
         self.conv_1 = layers.Conv2D(filters, 1, strides=stride, name=name + '_1_conv', data_format=DATA_FORMAT,
                                     use_bias=False, kernel_initializer=CONV_KERNEL_INIT, kernel_regularizer=reg)
-        self.bn_1 = layers.BatchNormalization(axis=BN_AXIS, epsilon=BN_EPS, name=name + '_1_bn')
+        self.bn_1 = layers.BatchNormalization(axis=BN_AXIS, momentum=BN_MOMENTUM, epsilon=BN_EPS, name=name + '_1_bn')
         self.relu_1 = layers.Activation('relu', name=name + '_1_relu')
 
         self.conv_2 = layers.Conv2D(filters, kernel_size, padding='SAME', name=name + '_2_conv', data_format=DATA_FORMAT,
                                     use_bias=False, kernel_initializer=CONV_KERNEL_INIT, kernel_regularizer=reg)
-        self.bn_2 = layers.BatchNormalization(axis=BN_AXIS, epsilon=BN_EPS, name=name + '_2_bn')
+        self.bn_2 = layers.BatchNormalization(axis=BN_AXIS, momentum=BN_MOMENTUM, epsilon=BN_EPS, name=name + '_2_bn')
         self.relu_2 = layers.Activation('relu', name=name + '_2_relu')
 
         self.conv_3 = layers.Conv2D(4 * filters, 1, name=name + '_3_conv', data_format=DATA_FORMAT,
                                     use_bias=False, kernel_initializer=CONV_KERNEL_INIT, kernel_regularizer=reg)
-        self.bn_3 = layers.BatchNormalization(axis=BN_AXIS, epsilon=BN_EPS, name=name + '_3_bn')
+        self.bn_3 = layers.BatchNormalization(axis=BN_AXIS, momentum=BN_MOMENTUM, epsilon=BN_EPS, name=name + '_3_bn')
 
         self.relu_out = layers.Activation('relu', name=name + '_out')
 
@@ -106,7 +107,7 @@ class Resnet50(models.Model):
         self.conv1_pad = layers.ZeroPadding2D(padding=((3, 3), (3, 3)), name='conv1_pad', data_format=DATA_FORMAT)
         self.conv1_conv = layers.Conv2D(64, 7, strides=2, name='conv1_conv', data_format=DATA_FORMAT,
                                         use_bias=False, kernel_initializer=CONV_KERNEL_INIT, kernel_regularizer=reg)
-        self.conv1_bn = layers.BatchNormalization(axis=BN_AXIS, epsilon=BN_EPS, name='conv1_bn')
+        self.conv1_bn = layers.BatchNormalization(axis=BN_AXIS, momentum=BN_MOMENTUM, epsilon=BN_EPS, name='conv1_bn')
         self.conv1_relu = layers.Activation('relu', name='conv1_relu')
         self.pool1_pad = layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name='pool1_pad', data_format=DATA_FORMAT)
         self.pool1_pool = layers.MaxPooling2D(3, strides=2, name='pool1_pool', data_format=DATA_FORMAT)
