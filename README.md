@@ -1,6 +1,7 @@
 # moco-tf2.x
 * Reimplementation of [MoCo: Momentum Contrast for Unsupervised Visual Representation Learning][1]
 * Trying to reimplement as much as possible in Tensorflow 2.x
+* Found many helpful implementations from [moco.tensorflow][3]
 
 
 ## Image augmentation
@@ -8,3 +9,4 @@
 
 [1]: https://github.com/facebookresearch/moco
 [2]: https://github.com/google-research/simclr
+[3]: https://github.com/ppwwyyxx/moco.tensorflow
