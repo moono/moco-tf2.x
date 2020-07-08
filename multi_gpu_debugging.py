@@ -13,8 +13,8 @@ def main():
 
     # prepare distribute training
     epochs = 200
-    dataset_n_images = 100000
-    batch_size_per_replica = 32
+    dataset_n_images = 100000000
+    batch_size_per_replica = 256
     strategy = tf.distribute.MirroredStrategy()
     global_batch_size = batch_size_per_replica * strategy.num_replicas_in_sync
 
@@ -22,20 +22,18 @@ def main():
     training_parameters = {
         # global params
         'name': 'debugging',
-        'use_tf_function': True,
+        'use_tf_function': False,
         'model_base_dir': './models',
 
         # moco params
+        'moco_version': 1,
         'base_encoder': 'linear',
-        'network_params': {'input_shape': [1], 'dim': 4, 'K': 16, 'm': 0.999, 'T': 0.07},
+        'network_params': {'input_shape': [1], 'dim': 4, 'K': 1024, 'm': 0.999, 'T': 0.07, 'w_decay': 0.0},
+        'learning_rate': {'schedule': 'step', 'initial_lr': 0.03, 'lr_decay': 0.1, 'lr_decay_boundaries': [120, 160]},
 
         # training params
         'n_images': dataset_n_images,
         'epochs': epochs,
-        'weight_decay': 0.0001,
-        'initial_lr': 0.001,
-        'lr_decay': 0.1,
-        'lr_decay_boundaries': None,
         'batch_size_per_replica': batch_size_per_replica,
         'global_batch_size': global_batch_size,
     }
@@ -46,15 +44,15 @@ def main():
     # load dataset
     dataset = get_toy_dataset(global_batch_size, dataset_n_images, epochs)
 
+    # create MoCo instance
+    # moco = MoCo(training_parameters, strategy)
     with strategy.scope():
-        # create MoCo instance
-        moco = MoCo(training_parameters)
-
         # distribute dataset
         dist_dataset = strategy.experimental_distribute_dataset(dataset)
 
         # start training
         print('Training...')
+        moco = MoCo(training_parameters)
         moco.train(dist_dataset, strategy)
     return
 
