@@ -14,7 +14,7 @@ from tensorflow.keras.regularizers import l2
 DATA_FORMAT = 'channels_first'
 BN_AXIS = 1
 BN_MOMENTUM = 0.9
-BN_EPS = 1e-5
+BN_EPS = 1.001e-5
 CONV_KERNEL_INIT = tf.keras.initializers.VarianceScaling(scale=2.0, mode='fan_out', distribution='untruncated_normal')
 FC_KERNEL_INIT = tf.keras.initializers.RandomNormal(stddev=0.01)
 
