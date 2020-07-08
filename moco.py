@@ -285,11 +285,13 @@ class MoCo(object):
             # get current step
             step = self.optimizer.iterations.numpy()
             c_lr = self.optimizer.learning_rate(self.optimizer.iterations)
+            c_ep = self.epochs_per_step * step
 
             # save to tensorboard
             with train_summary_writer.as_default():
+                tf.summary.scalar('c_epochs', c_ep, step=step)
                 tf.summary.scalar('accuracy', mean_accuracy, step=step)
-                tf.summary.scalar('infoNCE', mean_c_loss, step=step)
+                tf.summary.scalar('info_NCE', mean_c_loss, step=step)
                 tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
                 tf.summary.scalar('total_loss', mean_loss, step=step)
                 tf.summary.histogram('queue_0', self.queue[0, :], step=step)
@@ -298,9 +300,9 @@ class MoCo(object):
             # print every self.print_steps
             if step % self.print_step == 0:
                 elapsed = time.time() - t_start
-                c_epoch = self.epochs_per_step * step
+
                 logs = '[step/epoch/lr: {}/{:.3f}/{:.3f} in {:.2f}s]: loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}, acc {:.3f}'
-                print(logs.format(step, c_epoch, c_lr.numpy(), elapsed, mean_loss.numpy(), mean_c_loss.numpy(),
+                print(logs.format(step, c_ep, c_lr.numpy(), elapsed, mean_loss.numpy(), mean_c_loss.numpy(),
                                   mean_l2_reg.numpy(), mean_accuracy.numpy()))
 
                 # reset timer
