@@ -1,5 +1,5 @@
 import importlib
-# import tensorflow as tf
+import tensorflow as tf
 
 
 def get_proper_module(module_name, object_name):
@@ -29,6 +29,19 @@ def get_proper_module(module_name, object_name):
 #     add_decay_loss(model, weight_decay/2.0)
 #     return
 
+def set_not_trainable(model):
+    def set_model(m):
+        if isinstance(m, tf.keras.Model):
+            for layer in m.layers:
+                set_model(layer)
+        else:
+            if not isinstance(m, tf.keras.layers.BatchNormalization):
+                m.trainable = False
+        return
+
+    set_model(model)
+    return
+
 
 def load_model(name, network_name, network_params, trainable):
     class_name_table = {
@@ -42,8 +55,9 @@ def load_model(name, network_name, network_params, trainable):
 
     # set trainable or not
     if not trainable:
-        for layer in m.layers:
-            layer.trainable = False
+        set_not_trainable(m)
+        # for layer in m.layers:
+        #     layer.trainable = False
     return m
 
 
