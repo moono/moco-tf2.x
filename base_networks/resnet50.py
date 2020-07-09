@@ -142,13 +142,11 @@ class Resnet50(models.Model):
     @tf.function
     def momentum_update(self, src_net, m):
         for qw, kw in zip(src_net.weights, self.weights):
-            # print(f'{qw.name}: {kw.name}')
-            # assert qw.shape == kw.shape
-            # assert qw.name == kw.name
+            if 'moving' in qw.name:
+                continue
+
             updated_w = kw * m + qw * (1.0 - m)
             kw.assign(updated_w)
-
-            # tf.debugging.assert_near(updated_w, kw)
         return
 
     def _preprocess_inputs(self, image):
