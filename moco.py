@@ -74,8 +74,8 @@ class MoCo(object):
         for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
             assert qw.shape == kw.shape
             assert qw.name == kw.name
-            if 'moving' in qw.name:
-                continue
+            # if 'moving' in qw.name:
+            #     continue
             kw.assign(qw)
 
         # create queue

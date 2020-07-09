@@ -142,8 +142,8 @@ class Resnet50(models.Model):
     @tf.function
     def momentum_update(self, src_net, m):
         for qw, kw in zip(src_net.weights, self.weights):
-            if 'moving' in qw.name:
-                continue
+            # if 'moving' in qw.name:
+            #     continue
 
             updated_w = kw * m + qw * (1.0 - m)
             kw.assign(updated_w)

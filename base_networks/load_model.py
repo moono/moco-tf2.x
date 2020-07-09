@@ -55,9 +55,9 @@ def load_model(name, network_name, network_params, trainable):
 
     # set trainable or not
     if not trainable:
-        set_not_trainable(m)
-        # for layer in m.layers:
-        #     layer.trainable = False
+        # set_not_trainable(m)
+        for layer in m.layers:
+            layer.trainable = False
     return m
 
 
