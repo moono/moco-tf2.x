@@ -295,10 +295,13 @@ def gaussian_blur(image, kernel_size, sigma, padding='SAME'):
     Returns:
       A Tensor representing the blurred image.
     """
-    radius = tf.to_int32(kernel_size / 2)
+    # radius = tf.to_int32(kernel_size / 2)
+    radius = tf.cast(kernel_size / 2, dtype=tf.int32)
     kernel_size = radius * 2 + 1
-    x = tf.to_float(tf.range(-radius, radius + 1))
-    blur_filter = tf.exp(-tf.pow(x, 2.0) / (2.0 * tf.pow(tf.to_float(sigma), 2.0)))
+    # x = tf.to_float(tf.range(-radius, radius + 1))
+    # blur_filter = tf.exp(-tf.pow(x, 2.0) / (2.0 * tf.pow(tf.to_float(sigma), 2.0)))
+    x = tf.cast(tf.range(-radius, radius + 1), dtype=tf.float32)
+    blur_filter = tf.exp(-tf.pow(x, 2.0) / (2.0 * tf.pow(tf.cast(sigma, dtype=tf.float32), 2.0)))
     blur_filter /= tf.reduce_sum(blur_filter)
     # One vertical and one horizontal filter.
     blur_v = tf.reshape(blur_filter, [kernel_size, 1, 1, 1])
