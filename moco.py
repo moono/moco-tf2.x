@@ -203,7 +203,7 @@ class MoCo(object):
         k = tf.gather(all_k, indices=this_idx)
 
         t_var = self.encoder_q.trainable_variables
-        with tf.GradientTape() as tape:
+        with tf.GradientTape(watch_accessed_variables=False) as tape:
             tape.watch([im_q, k, self.queue, t_var])
 
             # compute query features
