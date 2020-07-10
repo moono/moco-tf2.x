@@ -92,7 +92,7 @@ class MoCo(object):
                                                                t_params['learning_rate']['lr_decay_boundaries'])
         else:
             self.lr_schedule_fn = CosineDecay(t_params['learning_rate']['initial_lr'], self.max_steps)
-        self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=True)
+        self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=False)
 
         # setup saving locations (object based savings)
         self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
@@ -204,7 +204,7 @@ class MoCo(object):
 
         t_var = self.encoder_q.trainable_variables
         with tf.GradientTape(watch_accessed_variables=False) as tape:
-            tape.watch([im_q, k, self.queue, t_var])
+            tape.watch([t_var])
 
             # compute query features
             q = self.encoder_q(im_q, training=True)  # queries: NxC
