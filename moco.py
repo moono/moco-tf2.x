@@ -70,12 +70,14 @@ class MoCo(object):
 
         # create the encoders and clone(q -> k)
         self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True)
-        self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=False)
+        self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=True)
         for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
             assert qw.shape == kw.shape
             assert qw.name == kw.name
-            # if 'moving' in qw.name:
-            #     continue
+            # don't copy ema variables
+            if 'moving' in qw.name:
+                print(f'skipping: {qw.name}')
+                continue
             kw.assign(qw)
 
         # create queue
