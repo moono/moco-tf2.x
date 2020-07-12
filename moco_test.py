@@ -93,7 +93,7 @@ class MoCo(object):
                                                                    t_params['learning_rate']['lr_decay_boundaries'])
             else:
                 self.lr_schedule_fn = CosineDecay(t_params['learning_rate']['initial_lr'], self.max_steps)
-            self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=False)
+            self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=True)
 
             # setup saving locations (object based savings)
             self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
@@ -289,7 +289,8 @@ class MoCo(object):
 
             # save to tensorboard
             with train_summary_writer.as_default():
-                tf.summary.scalar('c_epochs', c_ep, step=step)
+                tf.summary.scalar('epochs', c_ep, step=step)
+                tf.summary.scalar('learning_rate', c_lr, step=step)
                 tf.summary.scalar('accuracy', mean_accuracy, step=step)
                 tf.summary.scalar('info_NCE', mean_c_loss, step=step)
                 tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
