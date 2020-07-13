@@ -12,7 +12,7 @@ services:
       - "/mnt/vision-nas/moono/trained_models/moco-tf-2.x:/model-dir"
       - "/mnt/vision-nas/data-sets/tensorflow_datasets:/tfds-dir:ro"
     working_dir: "/work-dir"
-    command: ["python", "-u", "profile_step.py",
+    command: ["python", "-u", "train_test.py",
               "--allow_memory_growth", "false",
               "--debug_split_gpu", "false",
               "--use_tf_function", "true",
