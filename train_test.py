@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--moco_version', default=2, type=int)
     parser.add_argument('--batch_size_per_replica', default=8, type=int)
     parser.add_argument('--epochs', default=200, type=int)
+    parser.add_argument('--initial_lr', default=0.03, type=float)
     args = vars(parser.parse_args())
 
     # check args
@@ -49,7 +50,7 @@ def main():
             },
             'learning_rate': {
                 'schedule': 'step',
-                'initial_lr': 0.03,
+                'initial_lr': args['initial_lr'],
                 'lr_decay': 0.1,
                 'lr_decay_boundaries': [120, 160],
             }
@@ -68,7 +69,7 @@ def main():
             },
             'learning_rate': {
                 'schedule': 'cos',
-                'initial_lr': 0.03,
+                'initial_lr': args['initial_lr'],
             }
         }
     res = moco_params['network_params']['input_shape'][0]
