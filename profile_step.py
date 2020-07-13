@@ -62,7 +62,6 @@ class MoCo(object):
         self.max_steps = int(np.ceil(self.n_images / self.global_batch_size))
         self.epochs_per_step = self.global_batch_size / (self.n_images / self.epochs)
         self.reached_max_steps = False
-        self.summary_step = 10
         self.accuracy_step = 50
         self.print_step = 100
         self.save_step = 500
@@ -171,7 +170,7 @@ class MoCo(object):
         return k
 
     def train_step(self, inputs):
-        im_q, all_k = inputs
+        im_q, all_k, compute_accuracy = inputs
 
         # get appropriate keys
         all_idx = tf.range(self.global_batch_size)
@@ -205,16 +204,23 @@ class MoCo(object):
             labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
             c_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)  # [N, ]
 
+            # tf.argmax takes too much time...
+            if compute_accuracy:
+                accuracy = tf.cast(tf.equal(tf.math.argmax(logits, axis=1), labels), tf.float32)
+            else:
+                accuracy = 0.0
+
             # weight regularization loss
             l2_w_reg = tf.reduce_sum(self.encoder_q.losses)
 
             # scale to global batch scale
+            accuracy = tf.reduce_sum(accuracy) * (1.0 / self.global_batch_size)
             c_loss = tf.reduce_sum(c_loss) * (1.0 / self.global_batch_size)
             loss = c_loss + l2_w_reg
 
         gradients = tape.gradient(loss, t_var)
         self.optimizer.apply_gradients(zip(gradients, t_var))
-        return loss, c_loss, l2_w_reg, logits
+        return loss, c_loss, l2_w_reg, accuracy
 
     def train(self, dist_dataset, strategy):
         def dist_encode_key(inputs):
@@ -228,8 +234,8 @@ class MoCo(object):
             mean_loss0 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[0], axis=None)
             mean_loss1 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[1], axis=None)
             mean_loss2 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[2], axis=None)
-            out_logits = tf.concat(strategy.experimental_local_results(per_replica_out[3]), axis=0)
-            return mean_loss0, mean_loss1, mean_loss2, out_logits
+            mean_acc = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[3], axis=None)
+            return mean_loss0, mean_loss1, mean_loss2, mean_acc
 
         if self.use_tf_function:
             dist_encode_key = tf.function(dist_encode_key)
@@ -253,7 +259,10 @@ class MoCo(object):
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
 
             # train step: update queue encoder
-            mean_loss, mean_c_loss, mean_l2_reg, logits = dist_train_step((im_q, k_unshuffled))
+            compute_accuracy = True if self.optimizer.iterations % self.accuracy_step == 0 else False
+            if compute_accuracy:
+                print('Compute Accuracy!!')
+            mean_loss, mean_c_loss, mean_l2_reg, mean_accuracy = dist_train_step((im_q, k_unshuffled, compute_accuracy))
 
             # update key encoder
             self.encoder_k.momentum_update(self.encoder_q, self.m)
@@ -266,22 +275,17 @@ class MoCo(object):
             c_lr = self.optimizer.learning_rate(self.optimizer.iterations)
             c_ep = self.epochs_per_step * step
 
-            # compute accuracy (tf.argmax takes too much time...)
-            if step % self.accuracy_step == 0:
-                labels = tf.zeros(shape=(tf.shape(logits)[0]), dtype=tf.int64)
-                accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.math.argmax(logits, axis=1), labels), tf.float32))
-                tf.summary.scalar('accuracy', accuracy, step=step)
-
             # save to tensorboard
-            if step % self.summary_step == 0:
-                with train_summary_writer.as_default():
-                    tf.summary.scalar('epochs', c_ep, step=step)
-                    tf.summary.scalar('learning_rate', c_lr, step=step)
-                    tf.summary.scalar('info_NCE', mean_c_loss, step=step)
-                    tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
-                    tf.summary.scalar('total_loss', mean_loss, step=step)
-                    tf.summary.histogram('queue_0', self.queue[0, :], step=step)
-                    tf.summary.histogram('queue_-1', self.queue[-1, :], step=step)
+            with train_summary_writer.as_default():
+                if compute_accuracy:
+                    tf.summary.scalar('accuracy', mean_accuracy, step=step)
+                tf.summary.scalar('epochs', c_ep, step=step)
+                tf.summary.scalar('learning_rate', c_lr, step=step)
+                tf.summary.scalar('info_NCE', mean_c_loss, step=step)
+                tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
+                tf.summary.scalar('total_loss', mean_loss, step=step)
+                tf.summary.histogram('queue_0', self.queue[0, :], step=step)
+                tf.summary.histogram('queue_-1', self.queue[-1, :], step=step)
 
             # profile
             if step > 100 and not profile_started:
@@ -302,7 +306,7 @@ def main():
     parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=False)
     parser.add_argument('--debug_split_gpu', type=str_to_bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_tf_function', type=str_to_bool, nargs='?', const=True, default=True)
-    parser.add_argument('--name', default='profile2', type=str)
+    parser.add_argument('--name', default='profile7', type=str)
     parser.add_argument('--tfds_data_dir', default='/mnt/vision-nas/data-sets/tensorflow_datasets', type=str)
     parser.add_argument('--model_base_dir', default='./models', type=str)
     parser.add_argument('--moco_version', default=2, type=int)
