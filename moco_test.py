@@ -94,7 +94,7 @@ class MoCo(object):
                                                                    t_params['learning_rate']['lr_decay_boundaries'])
             else:
                 self.lr_schedule_fn = CosineDecay(t_params['learning_rate']['initial_lr'], self.max_steps)
-            self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=True)
+            self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=False)
 
             # setup saving locations (object based savings)
             self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
@@ -131,6 +131,7 @@ class MoCo(object):
             queue = tf.Variable(queue_init, trainable=False)
         return queue, queue_ptr
 
+    @tf.function
     def _batch_shuffle(self, im_k, strategy):
         collected_im_k = tf.concat(strategy.experimental_local_results(im_k), axis=0)
         global_batch_size = tf.shape(collected_im_k)[0]
@@ -143,6 +144,7 @@ class MoCo(object):
         shuffled_data = tf.gather(collected_im_k, indices=shuffled_idx)
         return shuffled_data, shuffled_idx
 
+    @tf.function
     def _batch_unshuffle(self, k_shuffled, shuffled_idx, strategy):
         collected_k_shuffled = tf.concat(strategy.experimental_local_results(k_shuffled), axis=0)
         output_shape = tf.shape(collected_k_shuffled)           # [GN, C]
@@ -150,6 +152,7 @@ class MoCo(object):
         unshuffled_im_k = tf.scatter_nd(indices=shuffled_idx, updates=collected_k_shuffled, shape=output_shape)
         return unshuffled_im_k
 
+    @tf.function
     def _dequeue_and_enqueue(self, keys):
         # keys: [GN, C]
         end_queue_ptr = self.queue_ptr + self.global_batch_size

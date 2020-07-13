@@ -14,17 +14,17 @@ from tensorflow.keras.regularizers import l2
 DATA_FORMAT = 'channels_first'
 BN_AXIS = 1
 
-# moco.tensorflow
-BN_MOMENTUM = 0.9
-BN_EPS = 1.001e-5
-CONV_KERNEL_INIT = tf.keras.initializers.VarianceScaling(scale=2.0, mode='fan_out', distribution='untruncated_normal')
-FC_KERNEL_INIT = tf.keras.initializers.RandomNormal(stddev=0.01)
-
-# # moco official
+# # moco.tensorflow
 # BN_MOMENTUM = 0.9
-# BN_EPS = 1e-5
+# BN_EPS = 1.001e-5
 # CONV_KERNEL_INIT = tf.keras.initializers.VarianceScaling(scale=2.0, mode='fan_out', distribution='untruncated_normal')
-# FC_KERNEL_INIT = tf.keras.initializers.VarianceScaling(scale=1/3, mode='fan_in', distribution='uniform')
+# FC_KERNEL_INIT = tf.keras.initializers.RandomNormal(stddev=0.01)
+
+# moco official
+BN_MOMENTUM = 0.9
+BN_EPS = 1e-5
+CONV_KERNEL_INIT = tf.keras.initializers.VarianceScaling(scale=2.0, mode='fan_out', distribution='untruncated_normal')
+FC_KERNEL_INIT = tf.keras.initializers.VarianceScaling(scale=1/3, mode='fan_in', distribution='uniform')
 
 
 class Block1(models.Model):
