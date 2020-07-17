@@ -53,7 +53,10 @@ def random_brightness(image, max_delta, impl='simclrv2'):
 def to_grayscale(image, keep_channels=True):
     image = tf.image.rgb_to_grayscale(image)
     if keep_channels:
-        image = tf.tile(image, [1, 1, 3])
+        if image.shape.ndims == 3:
+            image = tf.tile(image, [1, 1, 3])
+        else:
+            image = tf.tile(image, [1, 1, 1, 3])
     return image
 
 
