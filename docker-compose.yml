@@ -1,7 +1,7 @@
 version: '2.3'
 services:
   training:
-    image: 172.20.40.190:5000/tf-2.2.0-gpu:add-on
+    image: 172.20.40.190:5000/tf-2.0.0-gpu-py3:tfds
     runtime: nvidia
     environment:
       - NVIDIA_VISIBLE_DEVICES=0,1,2,3
@@ -26,7 +26,7 @@ services:
               "--initial_lr", "0.03",
     ]
   watching:
-    image: 172.20.40.190:5000/tf-2.2.0-gpu:add-on
+    image: 172.20.40.190:5000/tf-2.0.0-gpu-py3:tfds
     user: "2004:2004"
     container_name: "moono_tensorboard"
     depends_on:
