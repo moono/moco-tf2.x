@@ -6,7 +6,7 @@ from misc.utils import str_to_bool
 from misc.tf_utils import allow_memory_growth, split_gpu_for_testing
 from datasets.imagenet import get_dataset as get_imagenet_dataset
 
-from moco import MoCo
+from moco_test import MoCo
 
 
 def main():
@@ -21,6 +21,7 @@ def main():
     parser.add_argument('--moco_version', default=2, type=int)
     parser.add_argument('--batch_size_per_replica', default=8, type=int)
     parser.add_argument('--epochs', default=200, type=int)
+    parser.add_argument('--initial_lr', default=0.03, type=float)
     args = vars(parser.parse_args())
 
     # check args
@@ -49,7 +50,7 @@ def main():
             },
             'learning_rate': {
                 'schedule': 'step',
-                'initial_lr': 0.03,
+                'initial_lr': args['initial_lr'],
                 'lr_decay': 0.1,
                 'lr_decay_boundaries': [120, 160],
             }
@@ -68,7 +69,7 @@ def main():
             },
             'learning_rate': {
                 'schedule': 'cos',
-                'initial_lr': 0.03,
+                'initial_lr': args['initial_lr'],
             }
         }
     res = moco_params['network_params']['input_shape'][0]
@@ -99,14 +100,13 @@ def main():
     pp(training_parameters)
 
     # load dataset
-    dataset = get_imagenet_dataset(
-        args['tfds_data_dir'], is_training=True, res=res, moco_ver=args['moco_version'],
-        batch_size=global_batch_size, epochs=args['epochs'])
+    dataset = get_imagenet_dataset(args['tfds_data_dir'], is_training=True, res=res, moco_ver=args['moco_version'],
+                                   batch_size=global_batch_size, epochs=args['epochs'])
+
+    # create MoCo instance
+    moco = MoCo(training_parameters, strategy)
 
     with strategy.scope():
-        # create MoCo instance
-        moco = MoCo(training_parameters)
-
         # distribute dataset
         dist_dataset = strategy.experimental_distribute_dataset(dataset)
 

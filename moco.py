@@ -44,7 +44,7 @@ def constant_learning_rate_decay(global_batch_size, n_images, initial_lr, decay,
 
 
 class MoCo(object):
-    def __init__(self, t_params):
+    def __init__(self, t_params, strategy):
         # global parameters
         self.name = t_params['name']
         self.moco_version = t_params['moco_version']
@@ -57,6 +57,7 @@ class MoCo(object):
         self.max_steps = int(np.ceil(self.n_images / self.global_batch_size))
         self.epochs_per_step = self.global_batch_size / (self.n_images / self.epochs)
         self.reached_max_steps = False
+        self.accuracy_step = 100
         self.print_step = 100
         self.save_step = 500
         self.n_replica = self.global_batch_size // self.batch_size
@@ -68,69 +69,66 @@ class MoCo(object):
         self.m = t_params['network_params']['m']
         self.T = t_params['network_params']['T']
 
-        # create the encoders and clone(q -> k)
-        self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True)
-        self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=True)
-        for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
-            assert qw.shape == kw.shape
-            assert qw.name == kw.name
-            # don't copy ema variables
-            if 'moving' in qw.name:
-                print(f'skipping: {qw.name}')
-                continue
-            kw.assign(qw)
-
         # create queue
         self.queue, self.queue_ptr = self._setup_queue()
 
-        # create optimizer
-        if self.moco_version == 1:
-            self.lr_schedule_fn = constant_learning_rate_decay(self.global_batch_size,
-                                                               t_params['n_images'],
-                                                               t_params['learning_rate']['initial_lr'],
-                                                               t_params['learning_rate']['lr_decay'],
-                                                               t_params['learning_rate']['lr_decay_boundaries'])
-        else:
-            self.lr_schedule_fn = CosineDecay(t_params['learning_rate']['initial_lr'], self.max_steps)
-        self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=False)
+        # model, optimizer, and checkpoint must be created under `strategy.scope`
+        with strategy.scope():
+            # create the encoders and clone(q -> k)
+            self.encoder_q = load_model('encoder_q', self.base_encoder, t_params['network_params'], trainable=True)
+            self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=True)
+            for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
+                assert qw.shape == kw.shape
+                assert qw.name == kw.name
+                # don't copy ema variables
+                if 'moving' in qw.name:
+                    continue
+                kw.assign(qw)
 
-        # setup saving locations (object based savings)
-        self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
-        self.ckpt = tf.train.Checkpoint(optimizer=self.optimizer,
-                                        encoder_q=self.encoder_q,
-                                        encoder_k=self.encoder_k,
-                                        queue_ptr=self.queue_ptr,
-                                        queue=self.queue)
-        self.manager = tf.train.CheckpointManager(self.ckpt, self.ckpt_dir, max_to_keep=2)
+            # create optimizer
+            if self.moco_version == 1:
+                self.lr_schedule_fn = constant_learning_rate_decay(self.global_batch_size,
+                                                                   t_params['n_images'],
+                                                                   t_params['learning_rate']['initial_lr'],
+                                                                   t_params['learning_rate']['lr_decay'],
+                                                                   t_params['learning_rate']['lr_decay_boundaries'])
+            else:
+                self.lr_schedule_fn = CosineDecay(t_params['learning_rate']['initial_lr'], self.max_steps)
+            self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=False)
 
-        # try to restore
-        self.ckpt.restore(self.manager.latest_checkpoint)
-        if self.manager.latest_checkpoint:
-            print('Restored from {}'.format(self.manager.latest_checkpoint))
+            # setup saving locations (object based savings)
+            self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
+            self.ckpt = tf.train.Checkpoint(optimizer=self.optimizer,
+                                            encoder_q=self.encoder_q,
+                                            encoder_k=self.encoder_k,
+                                            queue_ptr=self.queue_ptr,
+                                            queue=self.queue)
+            self.manager = tf.train.CheckpointManager(self.ckpt, self.ckpt_dir, max_to_keep=2)
 
-            # check if already trained in this resolution
-            restored_step = self.optimizer.iterations.numpy()
-            if restored_step >= self.max_steps:
-                print('Already reached max steps {}/{}'.format(restored_step, self.max_steps))
-                self.reached_max_steps = True
-                return
-        else:
-            print('Not restoring from saved checkpoint')
+            # try to restore
+            self.ckpt.restore(self.manager.latest_checkpoint)
+            if self.manager.latest_checkpoint:
+                print('Restored from {}'.format(self.manager.latest_checkpoint))
+
+                # check if already trained in this resolution
+                restored_step = self.optimizer.iterations.numpy()
+                if restored_step >= self.max_steps:
+                    print('Already reached max steps {}/{}'.format(restored_step, self.max_steps))
+                    self.reached_max_steps = True
+                    return
+            else:
+                print('Not restoring from saved checkpoint')
         return
 
     def _setup_queue(self):
-        # queue pointer
-        queue_ptr_init = tf.zeros(shape=[], dtype=tf.int64)
-        queue_ptr = tf.Variable(queue_ptr_init, trainable=False,
-                                synchronization=tf.VariableSynchronization.ON_READ,
-                                aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
+        with tf.device('GPU:0'):
+            # queue pointer
+            queue_ptr_init = tf.zeros(shape=[], dtype=tf.int64)
+            queue_ptr = tf.Variable(queue_ptr_init, trainable=False)
 
-        # actual queue
-        queue_init = tf.math.l2_normalize(tf.random.normal([self.K, self.dim]), axis=1)
-        queue = tf.Variable(queue_init, trainable=False,
-                            synchronization=tf.VariableSynchronization.ON_READ,
-                            aggregation=tf.VariableAggregation.ONLY_FIRST_REPLICA)
-
+            # actual queue
+            queue_init = tf.math.l2_normalize(tf.random.normal([self.K, self.dim]), axis=1)
+            queue = tf.Variable(queue_init, trainable=False)
         return queue, queue_ptr
 
     @tf.function
@@ -192,7 +190,7 @@ class MoCo(object):
         return k
 
     def train_step(self, inputs):
-        im_q, all_k = inputs
+        im_q, all_k, compute_accuracy = inputs
 
         # get appropriate keys
         all_idx = tf.range(self.global_batch_size)
@@ -226,8 +224,11 @@ class MoCo(object):
             labels = tf.zeros(self.batch_size, dtype=tf.int64)  # [N, ]
             c_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=logits, labels=labels)  # [N, ]
 
-            # compute accuracy
-            accuracy = tf.cast(tf.equal(tf.math.argmax(logits, axis=1), labels), tf.float32)
+            # tf.argmax takes too much time...
+            if compute_accuracy:
+                accuracy = tf.cast(tf.equal(tf.math.argmax(logits, axis=1), labels), tf.float32)
+            else:
+                accuracy = 0.0
 
             # weight regularization loss
             l2_w_reg = tf.reduce_sum(self.encoder_q.losses)
@@ -243,16 +244,18 @@ class MoCo(object):
 
     def train(self, dist_dataset, strategy):
         def dist_encode_key(inputs):
-            per_replica_result = strategy.experimental_run_v2(fn=self.forward_encoder_k, args=(inputs,))
+            # per_replica_result = strategy.experimental_run_v2(fn=self.forward_encoder_k, args=(inputs,))
+            per_replica_result = strategy.run(fn=self.forward_encoder_k, args=(inputs,))
             return per_replica_result
 
         def dist_train_step(inputs):
-            per_replica_losses = strategy.experimental_run_v2(fn=self.train_step, args=(inputs,))
-            mean_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses[0], axis=None)
-            mean_c_loss = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses[1], axis=None)
-            mean_l2_reg = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses[2], axis=None)
-            mean_accuracy = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses[3], axis=None)
-            return mean_loss, mean_c_loss, mean_l2_reg, mean_accuracy
+            # per_replica_out = strategy.experimental_run_v2(fn=self.train_step, args=(inputs,))
+            per_replica_out = strategy.run(fn=self.train_step, args=(inputs,))
+            mean_loss0 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[0], axis=None)
+            mean_loss1 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[1], axis=None)
+            mean_loss2 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[2], axis=None)
+            mean_acc = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[3], axis=None)
+            return mean_loss0, mean_loss1, mean_loss2, mean_acc
 
         if self.use_tf_function:
             dist_encode_key = tf.function(dist_encode_key)
@@ -278,7 +281,8 @@ class MoCo(object):
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
 
             # train step: update queue encoder
-            mean_loss, mean_c_loss, mean_l2_reg, mean_accuracy = dist_train_step((im_q, k_unshuffled))
+            compute_accuracy = True if self.optimizer.iterations % self.accuracy_step == 0 else False
+            mean_loss, mean_c_loss, mean_l2_reg, mean_accuracy = dist_train_step((im_q, k_unshuffled, compute_accuracy))
 
             # update key encoder
             self.encoder_k.momentum_update(self.encoder_q, self.m)
@@ -293,8 +297,10 @@ class MoCo(object):
 
             # save to tensorboard
             with train_summary_writer.as_default():
-                tf.summary.scalar('c_epochs', c_ep, step=step)
-                tf.summary.scalar('accuracy', mean_accuracy, step=step)
+                if compute_accuracy:
+                    tf.summary.scalar('accuracy', mean_accuracy, step=step)
+                tf.summary.scalar('epochs', c_ep, step=step)
+                tf.summary.scalar('learning_rate', c_lr, step=step)
                 tf.summary.scalar('info_NCE', mean_c_loss, step=step)
                 tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
                 tf.summary.scalar('total_loss', mean_loss, step=step)
@@ -305,9 +311,9 @@ class MoCo(object):
             if step % self.print_step == 0:
                 elapsed = time.time() - t_start
 
-                logs = '[step/epoch/lr: {}/{:.3f}/{:.3f} in {:.2f}s]: loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}, acc {:.3f}'
+                logs = '[step/epoch/lr: {}/{:.3f}/{:.3f} in {:.2f}s]: loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}'
                 print(logs.format(step, c_ep, c_lr.numpy(), elapsed, mean_loss.numpy(), mean_c_loss.numpy(),
-                                  mean_l2_reg.numpy(), mean_accuracy.numpy()))
+                                  mean_l2_reg.numpy()))
 
                 # reset timer
                 t_start = time.time()
