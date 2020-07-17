@@ -3,6 +3,7 @@ import time
 import numpy as np
 import tensorflow as tf
 
+from datasets.imagenet import augmentation_v1, augmentation_v2
 from base_networks.load_model import load_model
 
 
@@ -46,8 +47,11 @@ def constant_learning_rate_decay(global_batch_size, n_images, initial_lr, decay,
 class MoCo(object):
     def __init__(self, t_params, strategy):
         # global parameters
+        self.cur_tf_ver = t_params['cur_tf_ver']
         self.name = t_params['name']
         self.moco_version = t_params['moco_version']
+        self.aug_op = t_params['aug_op']
+        self.res = t_params['res']
         self.use_tf_function = t_params['use_tf_function']
         self.model_base_dir = t_params['model_base_dir']
         self.batch_size = t_params['batch_size_per_replica']
@@ -57,10 +61,14 @@ class MoCo(object):
         self.max_steps = int(np.ceil(self.n_images / self.global_batch_size))
         self.epochs_per_step = self.global_batch_size / (self.n_images / self.epochs)
         self.reached_max_steps = False
-        self.accuracy_step = 100
         self.print_step = 100
         self.save_step = 500
         self.n_replica = self.global_batch_size // self.batch_size
+
+        if t_params['aug_op'] == 'GPU':
+            self.aug_fn = augmentation_v1 if self.moco_version == 1 else augmentation_v2
+        else:
+            self.aug_fn = None
 
         # moco parameters
         self.base_encoder = t_params['base_encoder']
@@ -184,6 +192,10 @@ class MoCo(object):
         # get this replica's im_k
         im_k = tf.gather(shuffled_im_k, indices=this_idx)   # [N, res, res, 3]
 
+        # run augmentation on gpu
+        if self.aug_fn is not None:
+            im_k = self.aug_fn(im_k, self.res)
+
         # compute query features
         k = self.encoder_k(im_k, training=True)  # keys: NxC
         k = tf.math.l2_normalize(k, axis=1)
@@ -191,6 +203,10 @@ class MoCo(object):
 
     def train_step(self, inputs):
         im_q, all_k, compute_accuracy = inputs
+
+        # run augmentation on gpu
+        if self.aug_fn is not None:
+            im_q = self.aug_fn(im_q, self.res)
 
         # get appropriate keys
         all_idx = tf.range(self.global_batch_size)
@@ -244,13 +260,17 @@ class MoCo(object):
 
     def train(self, dist_dataset, strategy):
         def dist_encode_key(inputs):
-            # per_replica_result = strategy.experimental_run_v2(fn=self.forward_encoder_k, args=(inputs,))
-            per_replica_result = strategy.run(fn=self.forward_encoder_k, args=(inputs,))
+            if self.cur_tf_ver == '2.0.0':
+                per_replica_result = strategy.experimental_run_v2(fn=self.forward_encoder_k, args=(inputs,))
+            else:
+                per_replica_result = strategy.run(fn=self.forward_encoder_k, args=(inputs,))
             return per_replica_result
 
         def dist_train_step(inputs):
-            # per_replica_out = strategy.experimental_run_v2(fn=self.train_step, args=(inputs,))
-            per_replica_out = strategy.run(fn=self.train_step, args=(inputs,))
+            if self.cur_tf_ver == '2.0.0':
+                per_replica_out = strategy.experimental_run_v2(fn=self.train_step, args=(inputs,))
+            else:
+                per_replica_out = strategy.run(fn=self.train_step, args=(inputs,))
             mean_loss0 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[0], axis=None)
             mean_loss1 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[1], axis=None)
             mean_loss2 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[2], axis=None)
@@ -271,6 +291,8 @@ class MoCo(object):
         print(f'max_steps: {self.max_steps}')
         t_start = time.time()
         for im_q, im_k in dist_dataset:
+            compute_accuracy = True if (self.optimizer.iterations + 1) % self.print_step == 0 else False
+
             # shuffle data on global scale
             shuffled_im_k, shuffled_idx = self._batch_shuffle(im_k, strategy)
 
@@ -281,7 +303,6 @@ class MoCo(object):
             k_unshuffled = self._batch_unshuffle(k_shuffled, shuffled_idx, strategy)
 
             # train step: update queue encoder
-            compute_accuracy = True if self.optimizer.iterations % self.accuracy_step == 0 else False
             mean_loss, mean_c_loss, mean_l2_reg, mean_accuracy = dist_train_step((im_q, k_unshuffled, compute_accuracy))
 
             # update key encoder
@@ -307,13 +328,15 @@ class MoCo(object):
                 tf.summary.histogram('queue_0', self.queue[0, :], step=step)
                 tf.summary.histogram('queue_-1', self.queue[-1, :], step=step)
 
-            # print every self.print_steps
-            if step % self.print_step == 0:
+            # print every self.print_steps == on compute_accuracy
+            if compute_accuracy:
                 elapsed = time.time() - t_start
-
-                logs = '[step/epoch/lr: {}/{:.3f}/{:.3f} in {:.2f}s]: loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}'
-                print(logs.format(step, c_ep, c_lr.numpy(), elapsed, mean_loss.numpy(), mean_c_loss.numpy(),
-                                  mean_l2_reg.numpy()))
+                logs_h = '[step/epoch/lr: {}/{:.3f}/{:.3f} in {:.2f}s]: '.format(step, c_ep, c_lr.numpy(), elapsed)
+                logs_b = 'loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}, acc {:.3f}'.format(mean_loss.numpy(),
+                                                                                        mean_c_loss.numpy(),
+                                                                                        mean_l2_reg.numpy(),
+                                                                                        mean_accuracy.numpy())
+                print(f'{logs_h}{logs_b}')
 
                 # reset timer
                 t_start = time.time()

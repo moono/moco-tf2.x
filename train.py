@@ -1,15 +1,23 @@
 import argparse
 import tensorflow as tf
 
+from distutils.version import StrictVersion
 from pprint import pprint as pp
 from misc.utils import str_to_bool
 from misc.tf_utils import allow_memory_growth, split_gpu_for_testing
 from datasets.imagenet import get_dataset as get_imagenet_dataset
 
-from moco_test import MoCo
+from moco import MoCo
 
 
 def main():
+    # check tensorflow version
+    tf_min_ver = '2.0.0'
+    cur_tf_ver = tf.__version__
+    print(f'Tensorflow version: {cur_tf_ver}')
+    if StrictVersion(cur_tf_ver) < StrictVersion(tf_min_ver):
+        raise ValueError(f'Need at least tf ver {tf_min_ver}')
+
     # global program arguments parser
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=False)
@@ -19,6 +27,7 @@ def main():
     parser.add_argument('--tfds_data_dir', default='/mnt/vision-nas/data-sets/tensorflow_datasets', type=str)
     parser.add_argument('--model_base_dir', default='./models', type=str)
     parser.add_argument('--moco_version', default=2, type=int)
+    parser.add_argument('--aug_op', default='GPU', type=str)
     parser.add_argument('--batch_size_per_replica', default=8, type=int)
     parser.add_argument('--epochs', default=200, type=int)
     parser.add_argument('--initial_lr', default=0.03, type=float)
@@ -81,9 +90,12 @@ def main():
     # training parameters
     training_parameters = {
         # global params
+        'cur_tf_ver': cur_tf_ver,
         'name': f'{args["name"]}_moco_v{args["moco_version"]}',
         'use_tf_function': args['use_tf_function'],
         'model_base_dir': args['model_base_dir'],
+        'aug_op': args['aug_op'],
+        'res': res,
 
         # moco params
         'moco_version': args['moco_version'],
@@ -101,7 +113,7 @@ def main():
 
     # load dataset
     dataset = get_imagenet_dataset(args['tfds_data_dir'], is_training=True, res=res, moco_ver=args['moco_version'],
-                                   batch_size=global_batch_size, epochs=args['epochs'])
+                                   aug_op=args['aug_op'], batch_size=global_batch_size, epochs=args['epochs'])
 
     # create MoCo instance
     moco = MoCo(training_parameters, strategy)
