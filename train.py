@@ -5,7 +5,7 @@ from distutils.version import StrictVersion
 from pprint import pprint as pp
 from misc.utils import str_to_bool
 from misc.tf_utils import allow_memory_growth, split_gpu_for_testing
-from datasets.imagenet import get_dataset as get_imagenet_dataset
+from datasets.imagenet import get_dataset, augmentation_v1, augmentation_v2
 
 from moco import MoCo
 
@@ -83,6 +83,12 @@ def main():
         }
     res = moco_params['network_params']['input_shape'][0]
 
+    # select proper image augmentation function
+    if args['aug_op'] == 'GPU':
+        aug_fn = augmentation_v1 if args['moco_version'] == 1 else augmentation_v2
+    else:
+        aug_fn = None
+
     # prepare distribute training
     strategy = tf.distribute.MirroredStrategy()
     global_batch_size = args['batch_size_per_replica'] * strategy.num_replicas_in_sync
@@ -94,7 +100,7 @@ def main():
         'name': f'{args["name"]}_moco_v{args["moco_version"]}',
         'use_tf_function': args['use_tf_function'],
         'model_base_dir': args['model_base_dir'],
-        'aug_op': args['aug_op'],
+        'aug_fn': aug_fn,
         'res': res,
 
         # moco params
@@ -112,8 +118,8 @@ def main():
     pp(training_parameters)
 
     # load dataset
-    dataset = get_imagenet_dataset(args['tfds_data_dir'], is_training=True, res=res, moco_ver=args['moco_version'],
-                                   aug_op=args['aug_op'], batch_size=global_batch_size, epochs=args['epochs'])
+    dataset = get_dataset(args['tfds_data_dir'], is_training=True, res=res, moco_ver=args['moco_version'],
+                          aug_op=args['aug_op'], batch_size=global_batch_size, epochs=args['epochs'])
 
     # create MoCo instance
     moco = MoCo(training_parameters, strategy)

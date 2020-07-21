@@ -3,7 +3,6 @@ import time
 import numpy as np
 import tensorflow as tf
 
-from datasets.imagenet import augmentation_v1, augmentation_v2
 from base_networks.load_model import load_model
 from misc.learning_rate_schedule import StepDecay, CosineDecay
 
@@ -14,7 +13,7 @@ class MoCo(object):
         self.cur_tf_ver = t_params['cur_tf_ver']
         self.name = t_params['name']
         self.moco_version = t_params['moco_version']
-        self.aug_op = t_params['aug_op']
+        self.aug_fn = t_params['aug_fn']
         self.res = t_params['res']
         self.use_tf_function = t_params['use_tf_function']
         self.model_base_dir = t_params['model_base_dir']
@@ -28,11 +27,6 @@ class MoCo(object):
         self.print_step = 100
         self.save_step = 500
         self.n_replica = self.global_batch_size // self.batch_size
-
-        if t_params['aug_op'] == 'GPU':
-            self.aug_fn = augmentation_v1 if self.moco_version == 1 else augmentation_v2
-        else:
-            self.aug_fn = None
 
         # moco parameters
         self.base_encoder = t_params['base_encoder']
