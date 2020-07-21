@@ -13,25 +13,29 @@ class StepDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
         learning_rates = [initial_lr] + [initial_lr * (lr_decay_rate ** (p + 1)) for p in range(n_boundaries - 2)]
 
         # assign
-        self.boundaries_in_step = tf.convert_to_tensor(boundaries_in_step)
-        self.learning_rates = tf.convert_to_tensor(learning_rates)
+        self.boundaries_in_step = boundaries_in_step
+        self.learning_rates = learning_rates
         self.n_boundaries = n_boundaries
         self.name = name
 
     def __call__(self, step):
         global_step_recomp = tf.cast(step, dtype=tf.int32)
+        boundaries_in_step = tf.convert_to_tensor(self.boundaries_in_step)
+        learning_rates = tf.convert_to_tensor(self.learning_rates)
 
         pos = tf.zeros([], dtype=tf.int32)
         for ii in range(self.n_boundaries - 1):
-            boundary_left = tf.convert_to_tensor(self.boundaries_in_step[ii])
-            boundary_right = tf.convert_to_tensor(self.boundaries_in_step[ii + 1])
+            boundary_left = tf.convert_to_tensor(boundaries_in_step[ii])
+            boundary_right = tf.convert_to_tensor(boundaries_in_step[ii + 1])
             predicate = tf.logical_and(tf.greater_equal(global_step_recomp, boundary_left),
                                        tf.less(global_step_recomp, boundary_right))
             pos = tf.cond(pred=predicate, true_fn=lambda: ii, false_fn=lambda: pos)
-        return self.learning_rates[pos]
+        return learning_rates[pos]
 
     def get_config(self):
         return {
+            'boundaries_in_step': self.boundaries_in_step,
+            'learning_rates': self.learning_rates,
             'n_boundaries': self.n_boundaries,
             'name': self.name,
         }
