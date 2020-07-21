@@ -5,43 +5,7 @@ import tensorflow as tf
 
 from datasets.imagenet import augmentation_v1, augmentation_v2
 from base_networks.load_model import load_model
-
-
-class CosineDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
-    def __init__(self, initial_lr, max_step_size, name=None):
-        super(CosineDecay, self).__init__()
-        self.initial_learning_rate = initial_lr
-        self.max_step_size = max_step_size
-        self.name = name
-
-    def __call__(self, step):
-        initial_lr = tf.convert_to_tensor(self.initial_learning_rate)
-        pi = tf.convert_to_tensor(np.pi)
-        global_step_recomp = tf.cast(step, initial_lr.dtype)
-        return initial_lr * 0.5 * (1.0 + tf.cos(global_step_recomp / self.max_step_size * pi))
-
-    def get_config(self):
-        return {
-            'initial_learning_rate': self.initial_learning_rate,
-            'max_step_size': self.max_step_size,
-            'name': self.name,
-        }
-
-
-def constant_learning_rate_decay(global_batch_size, n_images, initial_lr, decay, epoch_decay):
-    assert isinstance(global_batch_size, int) and isinstance(n_images, int)
-    assert isinstance(initial_lr, float) and isinstance(decay, float)
-    if epoch_decay is None:
-        return initial_lr
-
-    assert isinstance(epoch_decay, list) and isinstance(all(epoch_decay), int)
-
-    images_per_step = n_images / global_batch_size
-    boundaries_steps = [int(val * images_per_step) for val in epoch_decay]
-    values = [initial_lr] + [initial_lr * (decay ** (p + 1)) for p in range(len(boundaries_steps))]
-
-    schedule = tf.optimizers.schedules.PiecewiseConstantDecay(boundaries_steps, values)
-    return schedule
+from misc.learning_rate_schedule import StepDecay, CosineDecay
 
 
 class MoCo(object):
@@ -95,11 +59,12 @@ class MoCo(object):
 
             # create optimizer
             if self.moco_version == 1:
-                self.lr_schedule_fn = constant_learning_rate_decay(self.global_batch_size,
-                                                                   t_params['n_images'],
-                                                                   t_params['learning_rate']['initial_lr'],
-                                                                   t_params['learning_rate']['lr_decay'],
-                                                                   t_params['learning_rate']['lr_decay_boundaries'])
+                self.lr_schedule_fn = StepDecay(t_params['learning_rate']['initial_lr'],
+                                                t_params['learning_rate']['lr_decay'],
+                                                t_params['n_images'],
+                                                t_params['epochs'],
+                                                t_params['learning_rate']['lr_decay_boundaries'],
+                                                t_params['global_batch_size'])
             else:
                 self.lr_schedule_fn = CosineDecay(t_params['learning_rate']['initial_lr'], self.max_steps)
             self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=False)
