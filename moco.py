@@ -45,7 +45,7 @@ class MoCo(object):
             self.encoder_k = load_model('encoder_k', self.base_encoder, t_params['network_params'], trainable=True)
             for qw, kw in zip(self.encoder_q.weights, self.encoder_k.weights):
                 assert qw.shape == kw.shape
-                # assert qw.name == kw.name
+                assert qw.name == kw.name
                 # don't copy ema variables
                 if 'moving' in qw.name:
                     continue

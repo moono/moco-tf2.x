@@ -90,8 +90,8 @@ class Stack1(models.Model):
 
 # wrap again for distribute training momentum update
 class Resnet50(models.Model):
-    def __init__(self, resnet_params, **kwargs):
-        super(Resnet50, self).__init__(**kwargs)
+    def __init__(self, resnet_params, name, **kwargs):
+        super(Resnet50, self).__init__(name=name, **kwargs)
         w_decay = resnet_params['w_decay']
         reg = l2(w_decay)
 
