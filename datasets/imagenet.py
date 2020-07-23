@@ -176,7 +176,7 @@ def test_unsupervised_training_dataset():
         aug_fn = augmentation_v1 if moco_ver == 1 else augmentation_v2
 
     t_start = time.time()
-    for ii, (images_q, images_k) in enumerate(dataset):
+    for ii, (images_q, images_k) in enumerate(dataset.take(100)):
         # images_*: [batch_size, res, res, 3] (0.0 ~ 1.0) float32
 
         # im_q = postprocess_image(images_q)
@@ -213,12 +213,17 @@ def test_lincls_dataset():
 
     res = 224
     batch_size = 256
-    is_training = True
-    epochs = 1
     tfds_data_dir = '/mnt/vision-nas/data-sets/tensorflow_datasets'
-    dataset = get_dataset_lincls(tfds_data_dir, is_training, res, batch_size, epochs)
+    t_dataset = get_dataset_lincls(tfds_data_dir, True, res, batch_size, epochs=1)
+    v_dataset = get_dataset_lincls(tfds_data_dir, False, res, batch_size, epochs=1)
 
-    for images, labels in dataset.take(4):
+    for images, labels in t_dataset.take(4):
+        # images: [batch_size, res, res, 3] (0.0 ~ 1.0) float32
+        print(labels[0])
+        img = postprocess_image(images)
+        img.show()
+
+    for images, labels in v_dataset.take(4):
         # images: [batch_size, res, res, 3] (0.0 ~ 1.0) float32
         print(labels[0])
         img = postprocess_image(images)
@@ -234,7 +239,6 @@ def main():
 
 if __name__ == '__main__':
     main()
-
 
 # CPU MoCo ver 1
 # [12.188]: 0
