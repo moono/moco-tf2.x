@@ -16,7 +16,7 @@ services:
               "--allow_memory_growth", "false",
               "--debug_split_gpu", "false",
               "--use_tf_function", "true",
-              "--name", "trial19",
+              "--name", "trial20",
               "--tfds_data_dir", "/tfds-dir",
               "--model_base_dir", "/model-dir",
               "--moco_version", "1",
