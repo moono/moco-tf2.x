@@ -114,7 +114,7 @@ def main():
 
     # load dataset
     dataset = get_dataset(args['tfds_data_dir'], is_training=True, res=res, moco_ver=args['moco_version'],
-                          aug_op=args['aug_op'], batch_size=global_batch_size, epochs=args['epochs'])
+                          aug_op=args['aug_op'], batch_size=global_batch_size)
 
     # create MoCo instance
     moco = MoCo(training_parameters, strategy)
