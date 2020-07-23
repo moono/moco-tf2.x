@@ -110,9 +110,57 @@ def get_dataset(tfds_data_dir, is_training, res, moco_ver, aug_op, batch_size, e
     return dataset
 
 
-def main():
+def parse_fn(image, label, res, is_training):
+    image = fit_batch(image, res, is_training)
+    if is_training:
+        image = tf.image.random_flip_left_right(image)
+    image = tf.reshape(image, [res, res, 3])
+    image = tf.clip_by_value(image, 0., 1.)
+    return image, label
+
+
+def get_dataset_lincls(tfds_data_dir, is_training, res, batch_size, epochs=None):
+    dataset_name = 'imagenet2012'
+    manual_dir = os.path.join(tfds_data_dir, 'manual')
+    extract_dir = os.path.join(tfds_data_dir, dataset_name)
+
+    # prepare
+    dl_config = tfds.download.DownloadConfig(extract_dir=extract_dir, manual_dir=manual_dir)
+    builder = tfds.builder(dataset_name, data_dir=tfds_data_dir)
+    builder.download_and_prepare(download_config=dl_config)
+    info = builder.info
+    # print(info.features)
+
+    # instantiate tf.data.Dataset
+    dataset_options = {
+        'split': tfds.Split.TRAIN if is_training else tfds.Split.VALIDATION,
+        'decoders': {'image': tfds.decode.SkipDecoding()},
+        'shuffle_files': True,
+        'as_supervised': True
+    }
+    dataset = builder.as_dataset(**dataset_options)
+    dataset = dataset.shuffle(buffer_size=10000)
+    dataset = dataset.map(map_func=lambda i, l: (info.features['image'].decode_example(i), l),
+                          num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    dataset = dataset.map(map_func=lambda i, l: parse_fn(i, l, res, is_training),
+                          num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    dataset = dataset.repeat(epochs)
+    dataset = dataset.batch(batch_size)
+    dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+    return dataset
+
+
+def test_unsupervised_training_dataset():
     import time
     from PIL import Image
+
+    def postprocess_image(imgs):
+        img = imgs * 255.0
+        img = tf.cast(img, dtype=tf.uint8)
+        img = img[0].numpy()
+        img = Image.fromarray(img)
+        img = img.convert('RGB')
+        return img
 
     res = 224
     batch_size = 256
@@ -123,15 +171,9 @@ def main():
     tfds_data_dir = '/mnt/vision-nas/data-sets/tensorflow_datasets'
     dataset = get_dataset(tfds_data_dir, is_training, res, moco_ver, aug_op, batch_size, epochs)
 
-    def postprocess_image(imgs):
-        img = imgs * 255.0
-        img = tf.cast(img, dtype=tf.uint8)
-        img = img[0].numpy()
-        img = Image.fromarray(img)
-        img = img.convert('RGB')
-        return img
-
-    aug_fn = augmentation_v1 if moco_ver == 1 else augmentation_v2
+    aug_fn = None
+    if aug_op == 'GPU':
+        aug_fn = augmentation_v1 if moco_ver == 1 else augmentation_v2
 
     t_start = time.time()
     for ii, (images_q, images_k) in enumerate(dataset):
@@ -142,7 +184,7 @@ def main():
         # im_q.show()
         # im_k.show()
 
-        if aug_op == 'GPU':
+        if aug_fn is not None:
             images_q_aug = aug_fn(images_q, res)
             images_k_aug = aug_fn(images_k, res)
             # im_q_aug = postprocess_image(images_q_aug)
@@ -155,6 +197,38 @@ def main():
 
             print(f'[{elapsed:.3f}]: {ii * batch_size}')
             t_start = time.time()
+    return
+
+
+def test_lincls_dataset():
+    from PIL import Image
+
+    def postprocess_image(imgs):
+        img = imgs * 255.0
+        img = tf.cast(img, dtype=tf.uint8)
+        img = img[0].numpy()
+        img = Image.fromarray(img)
+        img = img.convert('RGB')
+        return img
+
+    res = 224
+    batch_size = 256
+    is_training = True
+    epochs = 1
+    tfds_data_dir = '/mnt/vision-nas/data-sets/tensorflow_datasets'
+    dataset = get_dataset_lincls(tfds_data_dir, is_training, res, batch_size, epochs)
+
+    for images, labels in dataset.take(4):
+        # images: [batch_size, res, res, 3] (0.0 ~ 1.0) float32
+        print(labels[0])
+        img = postprocess_image(images)
+        img.show()
+    return
+
+
+def main():
+    # test_unsupervised_training_dataset()
+    test_lincls_dataset()
     return
 
 
