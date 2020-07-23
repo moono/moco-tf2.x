@@ -1,10 +1,9 @@
 import argparse
 import tensorflow as tf
 
-from distutils.version import StrictVersion
 from pprint import pprint as pp
 from misc.utils import str_to_bool
-from misc.tf_utils import allow_memory_growth, split_gpu_for_testing
+from misc.tf_utils import check_tf_version, allow_memory_growth, split_gpu_for_testing
 from datasets.imagenet import get_dataset, augmentation_v1, augmentation_v2
 
 from moco import MoCo
@@ -12,11 +11,7 @@ from moco import MoCo
 
 def main():
     # check tensorflow version
-    tf_min_ver = '2.0.0'
-    cur_tf_ver = tf.__version__
-    print(f'Tensorflow version: {cur_tf_ver}')
-    if StrictVersion(cur_tf_ver) < StrictVersion(tf_min_ver):
-        raise ValueError(f'Need at least tf ver {tf_min_ver}')
+    cur_tf_ver = check_tf_version()
 
     # global program arguments parser
     parser = argparse.ArgumentParser(description='')

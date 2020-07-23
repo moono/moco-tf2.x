@@ -1,5 +1,7 @@
 import tensorflow as tf
 
+from distutils.version import StrictVersion
+
 
 def allow_memory_growth():
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -30,6 +32,16 @@ def split_gpu_for_testing(mem_in_gb=4):
         except RuntimeError as e:
             print(e)
     return
+
+
+def check_tf_version():
+    # check tensorflow version
+    tf_min_ver = '2.0.0'
+    cur_tf_ver = tf.__version__
+    print(f'Tensorflow version: {cur_tf_ver}')
+    if StrictVersion(cur_tf_ver) < StrictVersion(tf_min_ver):
+        raise ValueError(f'Need at least tf ver {tf_min_ver}')
+    return cur_tf_ver
 
 
 def main():
