@@ -28,6 +28,7 @@ class MoCo(object):
         self.save_step = 500
         self.n_replica = self.global_batch_size // self.batch_size
         self.dist_loss_scaler = 1.0 / self.global_batch_size
+        self.dist_wreg_scaler = 1.0 / self.n_replica
 
         # moco parameters
         self.base_encoder = t_params['base_encoder']
@@ -212,7 +213,7 @@ class MoCo(object):
             # scale to global batch scale
             accuracy = tf.reduce_sum(accuracy) * self.dist_loss_scaler
             c_loss = tf.reduce_sum(c_loss) * self.dist_loss_scaler
-            l2_w_reg = l2_w_reg * self.dist_loss_scaler
+            l2_w_reg = l2_w_reg * self.dist_wreg_scaler
             loss = c_loss + l2_w_reg
 
         gradients = tape.gradient(loss, t_var)
