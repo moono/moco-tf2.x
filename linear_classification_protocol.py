@@ -104,7 +104,7 @@ class LinearClassification(object):
         return
 
     def train_step(self, inputs):
-        images, labels = inputs
+        images, labels, train_acc_metric = inputs
 
         with tf.GradientTape() as tape:
             # forwards (even though batch norm layers are frozen, set training=True just for illustrated purpose)
@@ -122,22 +122,23 @@ class LinearClassification(object):
             loss = c_loss + l2_w_reg
         gradients = tape.gradient(loss, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
+
+        # update training metric
+        train_acc_metric.update_state(labels, logits)
+
         return loss, c_loss, l2_w_reg
 
-    def accuracy_step(self, inputs):
-        images, labels = inputs
-        global_batch_size = tf.shape(labels)[0] * self.n_replica
-        global_batch_size = tf.cast(global_batch_size, dtype=tf.float32)
+    def test_step(self, inputs):
+        images, labels, acc_metric = inputs
 
         # forward
         logits = self.model(images, training=False)     # [N, 1000]
-        accuracy = tf.cast(tf.equal(tf.math.argmax(logits, axis=1), labels), tf.float32)  # [N, ]
 
-        # scale to global batch scale
-        accuracy = tf.reduce_sum(accuracy) * (1.0 / global_batch_size)
-        return accuracy
+        # update accuracy metric
+        acc_metric.update_state(labels, logits)
+        return
 
-    def train(self, dist_dataset_train, dist_dataset_val, strategy):
+    def train(self, epochs, dist_dataset_train, dist_dataset_val, strategy):
         def dist_train_step(inputs):
             if self.cur_tf_ver == '2.0.0':
                 per_replica_out = strategy.experimental_run_v2(fn=self.train_step, args=(inputs,))
@@ -148,18 +149,16 @@ class LinearClassification(object):
             mean_loss2 = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out[2], axis=None)
             return mean_loss0, mean_loss1, mean_loss2
 
-        def dist_accuracy_step(inputs):
+        def dist_test_step(inputs):
             if self.cur_tf_ver == '2.0.0':
-                per_replica_out = strategy.experimental_run_v2(fn=self.accuracy_step, args=(inputs,))
+                per_replica_out = strategy.experimental_run_v2(fn=self.test_step, args=(inputs,))
             else:
-                per_replica_out = strategy.run(fn=self.accuracy_step, args=(inputs,))
-
-            mean_acc = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_out, axis=None)
-            return mean_acc
+                per_replica_out = strategy.run(fn=self.test_step, args=(inputs,))
+            return per_replica_out
 
         if self.use_tf_function:
             dist_train_step = tf.function(dist_train_step)
-            dist_accuracy_step = tf.function(dist_accuracy_step)
+            dist_test_step = tf.function(dist_test_step)
 
         if self.reached_max_steps:
             return
@@ -167,68 +166,70 @@ class LinearClassification(object):
         # setup tensorboards
         train_summary_writer = tf.summary.create_file_writer(self.ckpt_dir)
 
+        # Prepare the metrics.
+        train_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
+        val_acc_metric = tf.keras.metrics.SparseCategoricalAccuracy()
+
         # start actual training
-        print(f'max_steps: {self.max_steps}')
-        prev_epoch = 0
-        t_start = time.time()
-        for images, labels in dist_dataset_train:
-            # train step
-            mean_loss, mean_ce_loss, mean_l2_reg = dist_train_step((images, labels))
+        for epoch in range(epochs):
+            print(f'Epoch {epoch:03d} start!!')
+
+            t_start = time.time()
+            for images, labels in dist_dataset_train:
+                # train step
+                mean_loss, mean_ce_loss, mean_l2_reg = dist_train_step((images, labels, train_acc_metric))
+
+                # get current step
+                step = self.optimizer.iterations.numpy()
+
+                # print every self.print_step
+                if step % self.print_step == 0:
+                    elapsed = time.time() - t_start
+                    c_lr = self.optimizer.learning_rate(self.optimizer.iterations)
+                    c_ep = self.epochs_per_step * step
+
+                    # save to tensorboard
+                    with train_summary_writer.as_default():
+                        tf.summary.scalar('epochs', c_ep, step=step)
+                        tf.summary.scalar('learning_rate', c_lr, step=step)
+                        tf.summary.scalar('ce_loss', mean_ce_loss, step=step)
+                        tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
+                        tf.summary.scalar('total_loss', mean_loss, step=step)
+
+                    logs_h = f'[step/epoch/lr: {step}/{c_ep:.3f}/{c_lr.numpy():.3f} in {elapsed:.2f}s]: '
+                    logs_b = f'loss {mean_loss.numpy():.3f}, c_loss {mean_ce_loss.numpy():.3f}, l2_reg {mean_l2_reg.numpy():.3f}'
+                    print(f'{logs_h}{logs_b}')
+
+                    # reset timer
+                    t_start = time.time()
 
             # get current step
             step = self.optimizer.iterations.numpy()
-            c_lr = self.optimizer.learning_rate(self.optimizer.iterations)
-            c_ep = self.epochs_per_step * step
 
-            # save to tensorboard
+            # validation accuracy computation
+            for images_val, labels_val in dist_dataset_val:
+                dist_test_step((images_val, labels_val, val_acc_metric))
+
+            # accuracy handling
+            train_acc = train_acc_metric.result()
+            val_acc = val_acc_metric.result()
+
+            # save accuracies to tensorboard and print
             with train_summary_writer.as_default():
-                tf.summary.scalar('epochs', c_ep, step=step)
-                tf.summary.scalar('learning_rate', c_lr, step=step)
-                tf.summary.scalar('ce_loss', mean_ce_loss, step=step)
-                tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
-                tf.summary.scalar('total_loss', mean_loss, step=step)
+                tf.summary.scalar('train_acc', train_acc, step=step)
+                tf.summary.scalar('validation_acc', val_acc, step=step)
+            print(f'[Epoch {epoch:03d}] train acc: {float(train_acc):.4f}, val acc: {float(val_acc):.4f}')
 
-            # print every self.print_step
-            if step % self.print_step == 0:
-                elapsed = time.time() - t_start
-                logs_h = f'[step/epoch/lr: {step}/{c_ep:.3f}/{c_lr.numpy():.3f} in {elapsed:.2f}s]: '
-                logs_b = f'loss {mean_loss.numpy():.3f}, c_loss {mean_ce_loss.numpy():.3f}, l2_reg {mean_l2_reg.numpy():.3f}'
-                print(f'{logs_h}{logs_b}')
+            # reset training metrics at the end of each epoch
+            train_acc_metric.reset_states()
+            val_acc_metric.reset_states()
 
-                # reset timer
-                t_start = time.time()
-
-            # save every self.save_step
-            if step % self.save_step == 0:
-                self.manager.save(checkpoint_number=step)
-
-            # compute accuracy every epoch
-            floor_epoch = int(np.floor(c_ep))
-            if prev_epoch != floor_epoch:
-                v_acc = self.compute_validation_accuracy(dist_dataset_val, dist_accuracy_step)
-                prev_epoch = floor_epoch
-
-                with train_summary_writer.as_default():
-                    tf.summary.scalar('validation_accuracy', v_acc, step=step)
-
-            # check exit status
-            if step >= self.max_steps:
-                break
+            # save at every epoch
+            self.manager.save(checkpoint_number=epoch)
 
         # save last checkpoint
-        step = self.optimizer.iterations.numpy()
-        self.manager.save(checkpoint_number=step)
+        self.manager.save(checkpoint_number=epochs)
         return
-
-    def compute_validation_accuracy(self, dist_dataset_val, dist_accuracy_step):
-        accuracy_sum = tf.constant(0.0, dtype=tf.float32)
-        n_items = tf.Variable(0, dtype=tf.int64)
-        for images, labels in dist_dataset_val:
-            # step
-            accuracy = dist_accuracy_step((images, labels))
-            accuracy_sum += accuracy
-            n_items.assign_add(1)
-        return accuracy_sum / tf.cast(n_items, dtype=tf.float32)
 
 
 def main():
@@ -247,8 +248,9 @@ def main():
                         default='/mnt/vision-nas/moono/trained_models/moco-tf-2.x/trial19_moco_v1/ckpt-1000500',
                         type=str)
     parser.add_argument('--pretrained_moco_version', default=1, type=int)
-    parser.add_argument('--batch_size_per_replica', default=8, type=int)
-    parser.add_argument('--initial_lr', default=30.0, type=float)
+    parser.add_argument('--batch_size_per_replica', default=16, type=int)
+    # parser.add_argument('--initial_lr', default=30.0, type=float)
+    parser.add_argument('--initial_lr', default=3.75, type=float)
     args = vars(parser.parse_args())
 
     # check args
@@ -312,9 +314,8 @@ def main():
 
     # load dataset
     res = training_parameters['network_params']['input_shape'][0]
-    t_dataset = get_dataset_lincls(args['tfds_data_dir'], is_training=True, res=res, batch_size=global_batch_size)
-    v_dataset = get_dataset_lincls(args['tfds_data_dir'], is_training=False, res=res, batch_size=global_batch_size,
-                                   epochs=1)
+    t_dataset = get_dataset_lincls(args['tfds_data_dir'], True, res, global_batch_size, epochs=1)
+    v_dataset = get_dataset_lincls(args['tfds_data_dir'], False, res, global_batch_size, epochs=1)
 
     # create MoCo instance
     lincls = LinearClassification(training_parameters, strategy)
@@ -326,7 +327,7 @@ def main():
 
         # start training
         print('Training...')
-        lincls.train(t_dist_dataset, v_dist_dataset, strategy)
+        lincls.train(epochs, t_dist_dataset, v_dist_dataset, strategy)
     return
 
 
