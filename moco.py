@@ -275,24 +275,25 @@ class MoCo(object):
 
             # get current step
             step = self.optimizer.iterations.numpy()
-            c_lr = self.optimizer.learning_rate(self.optimizer.iterations)
-            c_ep = self.epochs_per_step * step
-
-            # save to tensorboard
-            with train_summary_writer.as_default():
-                if compute_accuracy:
-                    tf.summary.scalar('accuracy', mean_accuracy, step=step)
-                tf.summary.scalar('epochs', c_ep, step=step)
-                tf.summary.scalar('learning_rate', c_lr, step=step)
-                tf.summary.scalar('info_NCE', mean_c_loss, step=step)
-                tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
-                tf.summary.scalar('total_loss', mean_loss, step=step)
-                tf.summary.histogram('queue_0', self.queue[0, :], step=step)
-                tf.summary.histogram('queue_-1', self.queue[-1, :], step=step)
 
             # print every self.print_steps == on compute_accuracy
             if compute_accuracy:
                 elapsed = time.time() - t_start
+
+                c_lr = self.optimizer.learning_rate(self.optimizer.iterations)
+                c_ep = self.epochs_per_step * step
+
+                # save to tensorboard
+                with train_summary_writer.as_default():
+                    tf.summary.scalar('accuracy', mean_accuracy, step=step)
+                    tf.summary.scalar('epochs', c_ep, step=step)
+                    tf.summary.scalar('learning_rate', c_lr, step=step)
+                    tf.summary.scalar('info_NCE', mean_c_loss, step=step)
+                    tf.summary.scalar('w_l2_reg', mean_l2_reg, step=step)
+                    tf.summary.scalar('total_loss', mean_loss, step=step)
+                    # tf.summary.histogram('queue_0', self.queue[0, :], step=step)
+                    # tf.summary.histogram('queue_-1', self.queue[-1, :], step=step)
+
                 logs_h = '[step/epoch/lr: {}/{:.3f}/{:.3f} in {:.2f}s]: '.format(step, c_ep, c_lr.numpy(), elapsed)
                 logs_b = 'loss {:.3f}, c_loss {:.3f}, l2_reg {:.3f}, acc {:.3f}'.format(mean_loss.numpy(),
                                                                                         mean_c_loss.numpy(),
