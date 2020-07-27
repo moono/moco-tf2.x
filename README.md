@@ -1,12 +1,30 @@
 # moco-tf2.x
-* Reimplementation of [MoCo: Momentum Contrast for Unsupervised Visual Representation Learning][1]
-* Trying to reimplement as much as possible in Tensorflow 2.x
+* Unofficial reimplementation of [MoCo: Momentum Contrast for Unsupervised Visual Representation Learning][1]
 * Found many helpful implementations from [moco.tensorflow][3]
-
-
-## Image augmentation
 * Augmentation code are copied from [SimCLR - A Simple Framework for Contrastive Learning of Visual Representations][2]
+* Trying to implement as much as possible in Tensorflow 2.x
+  * Used MirroredStrategy with custom training loop ([tensorflow-tutorial][4])
+
+## Note
+* Difference between [official implementation][1]
+  * 8 GPUs vs 4 GPUs
+  * 53 Hours vs 130 hours (Unsupervised training time) - much slower than official one
+* Batch normalization - tf
+  * If one sets batch normalization layer as *un-trainable*, tf will normalize input with their moving mean & var, 
+  even though you use `training=True`
+* Lack of information about how to properly apply weight regularization within distributed environment
+* Linear classification protocol has not been tested yet
+
+## Current result
+* MoCo v1
+
+|       | Plot  |
+| :---: | :---: |
+| InfoNCE | |
+| (K+1) Accuracy | |
+
 
 [1]: https://github.com/facebookresearch/moco
 [2]: https://github.com/google-research/simclr
 [3]: https://github.com/ppwwyyxx/moco.tensorflow
+[4]: https://www.tensorflow.org/guide/distributed_training#using_tfdistributestrategy_with_custom_training_loops
