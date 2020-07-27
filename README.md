@@ -16,15 +16,17 @@
 * Linear classification protocol has not been tested yet
 
 ## Current result
-* MoCo v1
+* MoCo v1 - around 130 epoch results
 
-|       | Plot  |
-| :---: | :---: |
-| InfoNCE | |
-| (K+1) Accuracy | |
+|                | Plot                        |
+| :------------: | :-------------------------: |
+| InfoNCE        | ![InfoNCE][loss-graph]      |
+| (K+1) Accuracy | ![Accuracy][accuracy-graph] |
 
 
 [1]: https://github.com/facebookresearch/moco
 [2]: https://github.com/google-research/simclr
 [3]: https://github.com/ppwwyyxx/moco.tensorflow
 [4]: https://www.tensorflow.org/guide/distributed_training#using_tfdistributestrategy_with_custom_training_loops
+[loss-graph]: ./assets/moco-tf2.x-v1-loss.png
+[accuracy-graph]: ./assets/moco-tf2.x-v1-accuracy.png
