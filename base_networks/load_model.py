@@ -46,7 +46,6 @@ def set_not_trainable(model):
 def load_model(name, network_name, network_params, trainable):
     class_name_table = {
         'resnet50': 'Resnet50',
-        'linear': 'Linear',
     }
     class_name = class_name_table[network_name]
     model = get_proper_module(f'base_networks.{network_name}', class_name)
@@ -65,15 +64,6 @@ def main():
     from misc.tf_utils import allow_memory_growth
 
     allow_memory_growth()
-
-    linear_params = {
-        'input_shape': [4],
-        'dim': 4,
-    }
-    linear_q = load_model('linear_q', network_name='linear', network_params=linear_params, trainable=True)
-    linear_k = load_model('linear_k', network_name='linear', network_params=linear_params, trainable=False)
-    print(linear_q.summary())
-    print(linear_k.summary())
 
     resnet_params = {
         'input_shape': [224, 224, 3],
