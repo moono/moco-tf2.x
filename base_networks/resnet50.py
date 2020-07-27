@@ -32,12 +32,13 @@ class Block1(models.Model):
             self.bn = layers.BatchNormalization(axis=BN_AXIS, momentum=BN_MOMENTUM, epsilon=BN_EPS, name='downsample/1')
 
         # 1x1
-        self.conv_1 = layers.Conv2D(filters, 1, strides=stride, name='conv1', data_format=DATA_FORMAT,
+        self.conv_1 = layers.Conv2D(filters, 1, name='conv1', data_format=DATA_FORMAT,
                                     use_bias=False, kernel_initializer=CONV_KERNEL_INIT, kernel_regularizer=reg)
         self.bn_1 = layers.BatchNormalization(axis=BN_AXIS, momentum=BN_MOMENTUM, epsilon=BN_EPS, name='bn1')
 
         # 3x3
-        self.conv_2 = layers.Conv2D(filters, kernel_size, padding='SAME', name='conv2', data_format=DATA_FORMAT,
+        self.pad_2 = layers.ZeroPadding2D(padding=((1, 1), (1, 1)), name='pad2', data_format=DATA_FORMAT)
+        self.conv_2 = layers.Conv2D(filters, kernel_size, strides=stride, name='conv2', data_format=DATA_FORMAT,
                                     use_bias=False, kernel_initializer=CONV_KERNEL_INIT, kernel_regularizer=reg)
         self.bn_2 = layers.BatchNormalization(axis=BN_AXIS, momentum=BN_MOMENTUM, epsilon=BN_EPS, name='bn2')
 
@@ -53,6 +54,7 @@ class Block1(models.Model):
         out = self.bn_1(out, training=training)
         out = self.relu(out)
 
+        out = self.pad_2(out)
         out = self.conv_2(out)
         out = self.bn_2(out, training=training)
         out = self.relu(out)
