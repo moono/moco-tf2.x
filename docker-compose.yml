@@ -4,26 +4,26 @@ services:
     image: 172.20.40.190:5000/tf-2.0.0-gpu-py3:tfds
     runtime: nvidia
     environment:
-      - NVIDIA_VISIBLE_DEVICES=0,1,2,3
+      - NVIDIA_VISIBLE_DEVICES=2,3
     user: "2004:2004"
-    container_name: "moono_gpu_0123"
+    container_name: "moono_gpu_23"
     volumes:
       - "/mnt/vision-nas/moono/git-repos/moco-tf2.x:/work-dir"
       - "/mnt/vision-nas/moono/trained_models/moco-tf-2.x:/model-dir"
+      - "/mnt/vision-nas/moono/moco-official-converted/moco_v2_800ep:/pretrained-model-dir:ro"
       - "/mnt/vision-nas/data-sets/tensorflow_datasets:/tfds-dir:ro"
     working_dir: "/work-dir"
-    command: ["python", "-u", "train.py",
+    command: ["python", "-u", "linear_classification_protocol.py",
               "--allow_memory_growth", "false",
               "--debug_split_gpu", "false",
               "--use_tf_function", "true",
-              "--name", "trial21",
+              "--name", "trial1",
               "--tfds_data_dir", "/tfds-dir",
               "--model_base_dir", "/model-dir",
-              "--moco_version", "1",
-              "--aug_op", "GPU",
-              "--batch_size_per_replica", "64",
-              "--epochs", "200",
-              "--initial_lr", "0.03",
+              "--pretrained_ckpt", "/pretrained-model-dir/ckpt-0",
+              "--pretrained_moco_version", "2",
+              "--batch_size_per_replica", "128",
+              "--initial_lr", "30.0",
     ]
   watching:
     image: 172.20.40.190:5000/tf-2.0.0-gpu-py3:tfds

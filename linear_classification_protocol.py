@@ -244,10 +244,8 @@ def main():
     parser.add_argument('--name', default='test', type=str)
     parser.add_argument('--tfds_data_dir', default='/mnt/vision-nas/data-sets/tensorflow_datasets', type=str)
     parser.add_argument('--model_base_dir', default='./models', type=str)
-    parser.add_argument('--pretrained_ckpt',
-                        default='/mnt/vision-nas/moono/trained_models/moco-tf-2.x/trial19_moco_v1/ckpt-1000500',
-                        type=str)
-    parser.add_argument('--pretrained_moco_version', default=1, type=int)
+    parser.add_argument('--pretrained_ckpt', default='./official_pretrained/tensorflow_converted/ckpt-0', type=str)
+    parser.add_argument('--pretrained_moco_version', default=2, type=int)
     parser.add_argument('--batch_size_per_replica', default=16, type=int)
     # parser.add_argument('--initial_lr', default=30.0, type=float)
     parser.add_argument('--initial_lr', default=3.75, type=float)
