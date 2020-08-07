@@ -176,7 +176,7 @@ def main():
     parser.add_argument('--allow_memory_growth', type=str_to_bool, nargs='?', const=True, default=True)
     parser.add_argument('--pytorch_weight_fn', default='./official_pretrained/moco_v2_800ep_pretrain.pth.tar', type=str)
     parser.add_argument('--output_ckpt_dir', default='./official_pretrained/tensorflow_converted', type=str)
-    parser.add_argument('--copy_mlp', type=str_to_bool, nargs='?', const=True, default=False)
+    parser.add_argument('--copy_mlp', type=str_to_bool, nargs='?', const=True, default=True)
     args = vars(parser.parse_args())
 
     if args['allow_memory_growth']:
