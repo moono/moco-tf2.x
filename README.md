@@ -13,7 +13,6 @@
   * If one sets batch normalization layer as *un-trainable*, tf will normalize input with their moving mean & var, 
   even though you use `training=True`
 * Lack of information about how to properly apply weight regularization within distributed environment
-* Linear classification protocol has not been tested yet
 
 ## Current result
 * MoCo v1 - around 130 epoch results
