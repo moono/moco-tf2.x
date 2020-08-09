@@ -23,13 +23,14 @@ class StepDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
         boundaries_in_step = tf.convert_to_tensor(self.boundaries_in_step)
         learning_rates = tf.convert_to_tensor(self.learning_rates)
 
-        pos = tf.zeros([], dtype=tf.int32)
-        for ii in range(self.n_boundaries - 1):
+        pos = -1
+        for ii in tf.range(self.n_boundaries - 1):
             boundary_left = tf.convert_to_tensor(boundaries_in_step[ii])
             boundary_right = tf.convert_to_tensor(boundaries_in_step[ii + 1])
             predicate = tf.logical_and(tf.greater_equal(global_step_recomp, boundary_left),
                                        tf.less(global_step_recomp, boundary_right))
             pos = tf.cond(pred=predicate, true_fn=lambda: ii, false_fn=lambda: pos)
+
         return learning_rates[pos]
 
     def get_config(self):
@@ -78,7 +79,7 @@ def main():
     all_lr = list()
     all_st = list()
     max_step = int(np.ceil(n_images / global_batch_size))
-    for step in trange(0, max_step):
+    for step in trange(0, max_step + 100):
         all_st.append(step)
         all_lr.append(optimizer.learning_rate(step))
 
