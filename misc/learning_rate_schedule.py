@@ -24,7 +24,7 @@ class StepDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
         learning_rates = tf.convert_to_tensor(self.learning_rates)
 
         pos = -1
-        for ii in tf.range(self.n_boundaries - 1):
+        for ii in range(self.n_boundaries - 1):
             boundary_left = tf.convert_to_tensor(boundaries_in_step[ii])
             boundary_right = tf.convert_to_tensor(boundaries_in_step[ii + 1])
             predicate = tf.logical_and(tf.greater_equal(global_step_recomp, boundary_left),
