@@ -208,12 +208,13 @@ class MoCo(object):
                 accuracy = 0.0
 
             # weight regularization loss
-            l2_w_reg = tf.reduce_sum(self.encoder_q.losses)
+            # l2_w_reg = tf.reduce_sum(self.encoder_q.losses)
+            l2_w_reg = tf.nn.scale_regularization_loss(self.encoder_q.losses)
 
             # scale to global batch scale
             accuracy = tf.reduce_sum(accuracy) * self.dist_loss_scaler
             c_loss = tf.reduce_sum(c_loss) * self.dist_loss_scaler
-            l2_w_reg = l2_w_reg * self.dist_wreg_scaler
+            # l2_w_reg = l2_w_reg * self.dist_wreg_scaler
             loss = c_loss + l2_w_reg
 
         gradients = tape.gradient(loss, t_var)
