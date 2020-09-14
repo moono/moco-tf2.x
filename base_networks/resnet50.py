@@ -84,19 +84,19 @@ class SyncBatchNormalization(normalization.BatchNormalizationBase):
             group_mean, group_variance = replica_ctx.all_reduce(reduce_util.ReduceOp.MEAN, [shard_mean, shard_variance])
             mean_distance = tf.math.squared_difference(tf.stop_gradient(group_mean), shard_mean)
             group_variance += replica_ctx.all_reduce(reduce_util.ReduceOp.MEAN, mean_distance)
-            tf.cond(tf.reduce_mean(group_variance) > 50,
-                    lambda: tf.print(
-                        f"\n{self.name} id", replica_ctx.replica_id_in_sync_group, "/",
-                        replica_ctx.num_replicas_in_sync, "\n",
-                        "local mean distance:", mean_distance, "mean local mean distance",
-                        tf.reduce_mean(mean_distance), "\n",
-                        "group var:", group_variance, "mean group var:", tf.reduce_mean(group_variance), "\n",
-                        "local var:", shard_variance, "mean local var:", tf.reduce_mean(shard_variance), "\n",
-                        "group mean:", group_mean, "mean group mean", tf.reduce_mean(group_mean), "\n",
-                        "local mean:", shard_mean, "mean local mean", tf.reduce_mean(shard_mean), "\n",
-                        "size:", tf.shape(shard_mean)),
-                    lambda: tf.no_op()
-                    )
+            # tf.cond(tf.reduce_mean(group_variance) > 50,
+            #         lambda: tf.print(
+            #             f"\n{self.name} id", replica_ctx.replica_id_in_sync_group, "/",
+            #             replica_ctx.num_replicas_in_sync, "\n",
+            #             "local mean distance:", mean_distance, "mean local mean distance",
+            #             tf.reduce_mean(mean_distance), "\n",
+            #             "group var:", group_variance, "mean group var:", tf.reduce_mean(group_variance), "\n",
+            #             "local var:", shard_variance, "mean local var:", tf.reduce_mean(shard_variance), "\n",
+            #             "group mean:", group_mean, "mean group mean", tf.reduce_mean(group_mean), "\n",
+            #             "local mean:", shard_mean, "mean local mean", tf.reduce_mean(shard_mean), "\n",
+            #             "size:", tf.shape(shard_mean)),
+            #         lambda: tf.no_op()
+            #         )
             return group_mean, group_variance
         else:
             return shard_mean, shard_variance
