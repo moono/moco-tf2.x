@@ -1,0 +1,129 @@
+version: '2.3'
+services:
+  worker0:
+    image: 172.20.40.190:5000/tf-2.3.0-gpu:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=4
+    user: "2004:2004"
+    container_name: "moono_gpu_4"
+    volumes:
+      - "/mnt/vision-nas/moono/git-repos/moco-tf2.x:/work-dir"
+      - "/mnt/vision-nas/moono/trained_models/moco-tf-2.x:/model-dir"
+      - "/mnt/vision-nas/data-sets/tensorflow_datasets:/tfds-dir:ro"
+    working_dir: "/work-dir"
+    command: ["python", "-u", "main_multi_worker.py",
+              "--n_workers", "4",
+              "--port_start", "30000",
+              "--index", "0",
+              "--allow_memory_growth", "false",
+              "--debug_split_gpu", "false",
+              "--use_tf_function", "true",
+              "--name", "gpu_4_multi_worker",
+              "--tfds_data_dir", "/tfds-dir",
+              "--model_base_dir", "/model-dir",
+              "--moco_version", "1",
+              "--aug_op", "GPU",
+              "--batch_size_per_replica", "64",
+              "--epochs", "200",
+              "--initial_lr", "0.03",
+    ]
+  worker1:
+    image: 172.20.40.190:5000/tf-2.3.0-gpu:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=5
+    user: "2004:2004"
+    container_name: "moono_gpu_5"
+    depends_on: worker0
+    volumes:
+      - "/mnt/vision-nas/moono/git-repos/moco-tf2.x:/work-dir"
+      - "/mnt/vision-nas/moono/trained_models/moco-tf-2.x:/model-dir"
+      - "/mnt/vision-nas/data-sets/tensorflow_datasets:/tfds-dir:ro"
+    working_dir: "/work-dir"
+    command: [ "python", "-u", "main_multi_worker.py",
+               "--n_workers", "4",
+               "--port_start", "30000",
+               "--index", "1",
+               "--allow_memory_growth", "false",
+               "--debug_split_gpu", "false",
+               "--use_tf_function", "true",
+               "--name", "gpu_4_multi_worker",
+               "--tfds_data_dir", "/tfds-dir",
+               "--model_base_dir", "/model-dir",
+               "--moco_version", "1",
+               "--aug_op", "GPU",
+               "--batch_size_per_replica", "64",
+               "--epochs", "200",
+               "--initial_lr", "0.03",
+    ]
+  worker2:
+    image: 172.20.40.190:5000/tf-2.3.0-gpu:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=6
+    user: "2004:2004"
+    container_name: "moono_gpu_6"
+    depends_on: worker1
+    volumes:
+      - "/mnt/vision-nas/moono/git-repos/moco-tf2.x:/work-dir"
+      - "/mnt/vision-nas/moono/trained_models/moco-tf-2.x:/model-dir"
+      - "/mnt/vision-nas/data-sets/tensorflow_datasets:/tfds-dir:ro"
+    working_dir: "/work-dir"
+    command: [ "python", "-u", "main_multi_worker.py",
+               "--n_workers", "4",
+               "--port_start", "30000",
+               "--index", "2",
+               "--allow_memory_growth", "false",
+               "--debug_split_gpu", "false",
+               "--use_tf_function", "true",
+               "--name", "gpu_4_multi_worker",
+               "--tfds_data_dir", "/tfds-dir",
+               "--model_base_dir", "/model-dir",
+               "--moco_version", "1",
+               "--aug_op", "GPU",
+               "--batch_size_per_replica", "64",
+               "--epochs", "200",
+               "--initial_lr", "0.03",
+    ]
+  worker3:
+    image: 172.20.40.190:5000/tf-2.3.0-gpu:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=7
+    user: "2004:2004"
+    container_name: "moono_gpu_7"
+    depends_on: worker2
+    volumes:
+      - "/mnt/vision-nas/moono/git-repos/moco-tf2.x:/work-dir"
+      - "/mnt/vision-nas/moono/trained_models/moco-tf-2.x:/model-dir"
+      - "/mnt/vision-nas/data-sets/tensorflow_datasets:/tfds-dir:ro"
+    working_dir: "/work-dir"
+    command: [ "python", "-u", "main_multi_worker.py",
+               "--n_workers", "4",
+               "--port_start", "30000",
+               "--index", "3",
+               "--allow_memory_growth", "false",
+               "--debug_split_gpu", "false",
+               "--use_tf_function", "true",
+               "--name", "gpu_4_multi_worker",
+               "--tfds_data_dir", "/tfds-dir",
+               "--model_base_dir", "/model-dir",
+               "--moco_version", "1",
+               "--aug_op", "GPU",
+               "--batch_size_per_replica", "64",
+               "--epochs", "200",
+               "--initial_lr", "0.03",
+    ]
+  watching:
+    image: 172.20.40.190:5000/tf-2.3.0-gpu:latest
+    user: "2004:2004"
+    container_name: "moono_tensorboard"
+    depends_on:
+      - worker3
+    volumes:
+      - "/mnt/vision-nas/moono/trained_models/moco-tf-2.x:/model-dir"
+    ports:
+      - "36006:6006"
+    working_dir: "/model-dir"
+    command: ["tensorboard", "--logdir", "./", "--host", "0.0.0.0", "--port", "6006"]

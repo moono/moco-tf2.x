@@ -34,9 +34,8 @@ def split_gpu_for_testing(mem_in_gb=4):
     return
 
 
-def check_tf_version():
+def check_tf_version(tf_min_ver='2.0.0'):
     # check tensorflow version
-    tf_min_ver = '2.0.0'
     cur_tf_ver = tf.__version__
     print(f'Tensorflow version: {cur_tf_ver}')
     if StrictVersion(cur_tf_ver) < StrictVersion(tf_min_ver):
