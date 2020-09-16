@@ -33,16 +33,16 @@ def main():
     })
 
     call(['python', 'train_multi_worker.py',
-          '--allow_memory_growth', args['allow_memory_growth'],
-          '--use_tf_function', args['use_tf_function'],
-          '--name', args['name'],
-          '--tfds_data_dir', args['tfds_data_dir'],
-          '--model_base_dir', args['model_base_dir'],
-          '--moco_version', args['moco_version'],
-          '--aug_op', args['aug_op'],
-          '--batch_size_per_replica', args['batch_size_per_replica'],
-          '--epochs', args['epochs'],
-          '--initial_lr', args['initial_lr']
+          '--allow_memory_growth', str(args['allow_memory_growth']),
+          '--use_tf_function', str(args['use_tf_function']),
+          '--name', str(args['name']),
+          '--tfds_data_dir', str(args['tfds_data_dir']),
+          '--model_base_dir', str(args['model_base_dir']),
+          '--moco_version', str(args['moco_version']),
+          '--aug_op', str(args['aug_op']),
+          '--batch_size_per_replica', str(args['batch_size_per_replica']),
+          '--epochs', str(args['epochs']),
+          '--initial_lr', str(args['initial_lr'])
           ])
     return
 
