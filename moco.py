@@ -63,7 +63,8 @@ class MoCo(object):
                                                 t_params['global_batch_size'])
             else:
                 self.lr_schedule_fn = CosineDecay(t_params['learning_rate']['initial_lr'], self.max_steps)
-            self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=False)
+            # self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=False)
+            self.optimizer = tf.keras.optimizers.SGD(self.lr_schedule_fn, momentum=0.9, nesterov=True)
 
             # setup saving locations (object based savings)
             self.ckpt_dir = os.path.join(self.model_base_dir, self.name)
